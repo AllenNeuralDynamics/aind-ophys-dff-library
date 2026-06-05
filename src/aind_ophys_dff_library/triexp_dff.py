@@ -394,6 +394,55 @@ def _process_roi(
 # ---------------------------------------------------------------------------
 
 
+def log_to_jsonable(log: dict) -> dict:
+    """Normalize a per-ROI triexp log dict into a JSON-serializable shape.
+
+    The per-ROI logs emitted by ``dff`` (one entry per ROI in the returned
+    ``logs`` list) contain tuple keys (e.g. ``(c_pos, c_neg)`` combo IDs),
+    NumPy arrays, and nested dicts. JSON does not accept tuple keys or
+    ndarray values, so callers that want to serialize a log to JSON must
+    normalize it first. This helper handles the conversion:
+
+    - Tuple keys become underscore-joined strings (``(2, 3) -> "2_3"``).
+    - ndarray values become Python lists (via ``.tolist()``).
+    - Tuple values become Python lists.
+    - Dict values are recursed into.
+    - All other values pass through unchanged.
+
+    Parameters
+    ----------
+    log : dict
+        A single per-ROI log dict, as produced by ``dff`` (one element of
+        the returned ``logs`` list).
+
+    Returns
+    -------
+    dict
+        JSON-serializable shallow copy of ``log``. The original is not
+        mutated.
+
+    Notes
+    -----
+    This helper intentionally returns the log body only — it does not add a
+    ``"roi"`` index or any other caller-specific identity. Callers that want
+    a per-row identity should wrap the return value (e.g.
+    ``{"roi": i, **log_to_jsonable(log)}``).
+    """
+    def _key(k):
+        return f"{k[0]}_{k[1]}" if isinstance(k, tuple) else k
+
+    def _val(v):
+        if isinstance(v, np.ndarray):
+            return v.tolist()
+        if isinstance(v, dict):
+            return {_key(k): _val(vv) for k, vv in v.items()}
+        if isinstance(v, tuple):
+            return list(v)
+        return v
+
+    return {k: _val(v) for k, v in log.items()}
+
+
 def dff(
     F: np.ndarray,
     config: "DffConfig | dict",
