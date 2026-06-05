@@ -18,6 +18,7 @@ version = "0.0.0"
 
 dependencies = [
     'aind-ophys-utils @ git+https://github.com/AllenNeuralDynamics/aind-ophys-utils.git@a36b416',
+    'joblib==1.5.3',
 ]
 
 [dependency-groups]
