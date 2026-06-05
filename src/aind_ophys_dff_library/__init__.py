@@ -1,1 +1,1 @@
-"""Init package"""
+"""aind-ophys-dff-library."""
