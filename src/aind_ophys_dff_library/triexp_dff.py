@@ -434,13 +434,15 @@ def log_to_jsonable(log: dict) -> dict:
     def _val(v):
         if isinstance(v, np.ndarray):
             return v.tolist()
+        if isinstance(v, np.generic):
+            return v.item()
         if isinstance(v, dict):
             return {_key(k): _val(vv) for k, vv in v.items()}
-        if isinstance(v, tuple):
-            return list(v)
+        if isinstance(v, (tuple, list)):
+            return [_val(x) for x in v]
         return v
 
-    return {k: _val(v) for k, v in log.items()}
+    return {_key(k): _val(v) for k, v in log.items()}
 
 
 def dff(
