@@ -280,7 +280,7 @@ def _is_low_f0(
     return float(np.mean(F_row < f0)) < min_frac_below_f0
 
 
-def _process_roi(
+def _process_roi(  # noqa: C901
     i: int,
     F_fit: np.ndarray,
     t_rel: np.ndarray,
@@ -303,8 +303,8 @@ def _process_roi(
     --------
     n_passes          : int — number of passes run (1, 2, or 3)
     winner_combo      : (c_pos, c_neg) — final accepted winner
-    winner_params     : (7,) float64 — model parameters of the winner.
-                        Convenience shortcut for ``log[f"pass{winner_pass}"][winner_combo]["params"]``.
+    winner_params     : (7,) float64 — model parameters of the winner. Convenience
+                        shortcut for ``log[f"pass{winner_pass}"][winner_combo]["params"]``.
     winner_pass       : 1 | 2 | 3 — which pass produced the winning fit.
     pass1_trigger     : "low_f0" | "no_winner" — why Pass 2 was entered (None if Pass 1 won)
     pass1_winner      : (c_pos, c_neg) | None — best Pass 1 combo before low_f0 check;
@@ -526,9 +526,11 @@ def log_to_jsonable(log: dict) -> dict:
     ``{"roi": i, **log_to_jsonable(log)}``).
     """
     def _key(k):
+        """Flatten 2-tuple keys to underscore-joined strings."""
         return f"{k[0]}_{k[1]}" if isinstance(k, tuple) else k
 
     def _val(v):
+        """Recursively normalize a log value into a JSON-serializable shape."""
         if isinstance(v, np.ndarray):
             return v.tolist()
         if isinstance(v, np.generic):
@@ -567,8 +569,8 @@ def dff(
     F0 : (N, T) float32        — analytic F0 clamped to noise floor (max(model_output, noise_sd))
     noise_sd : (N,) float32    — per-ROI MAD noise estimate (from set_dff_config),
                                   used as the noise floor for F0 clamping
-    params : (N, 7) float64    — winner model parameters per ROI,
-                                  interleaved [b_inf, b_slow, t_slow, b_fast, t_fast, b_bright, t_bright]
+    params : (N, 7) float64    — winner model parameters per ROI, interleaved
+                                  [b_inf, b_slow, t_slow, b_fast, t_fast, b_bright, t_bright]
                                   (b_bright ≤ 0)
     logs : list[dict]          — per-ROI pass diagnostics (length N);
                                   for 1D input F, a single dict is returned instead

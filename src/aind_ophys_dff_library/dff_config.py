@@ -238,7 +238,7 @@ def set_dff_config(
         np.full(N, t_init),          # 2: t_slow
         np.zeros(N),                 # 3: b_fast
         np.full(N, t_fast_init_s),   # 4: t_fast
-        np.zeros(N),                 # 5: b_bright (≤ 0, starts at 0 — no bright term assumed initially)
+        np.zeros(N),                 # 5: b_bright (≤ 0; starts at 0 — no bright term initially)
         np.full(N, t_init),          # 6: t_bright
     ])  # (N, 7), interleaved: [b_inf, b_slow, t_slow, b_fast, t_fast, b_bright, t_bright]
 
