@@ -186,9 +186,37 @@ def _select_winner(
     t_rel: np.ndarray,
     dt: float,
     combos: tuple,
-) -> Optional[tuple]:
-    """Apply eligibility filters and return winning combo key, or None."""
-    best_combo = None
+) -> Tuple[Optional[tuple], dict]:
+    """Apply eligibility filters and return ``(winner_combo, per_combo_stats)``.
+
+    ``winner_combo`` is the eligible combo whose ``score = abs(med_neg - target)``
+    is minimized, or ``None`` if no combo passed all three eligibility filters.
+
+    ``per_combo_stats[combo]`` is a dict with three fields, populated for
+    every combo (including ineligible ones):
+
+    - ``med_neg``         : float | None — median absolute negative residual.
+                            ``None`` only if Filter 1 (≥10 negative residuals
+                            with finite median) rejected the combo.
+    - ``score``           : float | None — ``abs(med_neg - target)``. ``None``
+                            iff ``med_neg`` is ``None``. Defined for combos
+                            rejected by Filter 2 / Filter 3 so callers can
+                            rank ineligible combos by structural distance to
+                            the target if they wish.
+    - ``filter_failure``  : str | None — eligibility tag. ``None`` means the
+                            combo passed all filters and is winner-eligible.
+                            Possible failure tags:
+                              * ``"few_neg_residuals"`` — fewer than 10
+                                negative residuals (Filter 1).
+                              * ``"med_neg_not_finite"`` — Filter 1 passed
+                                count check but ``med_neg`` was non-finite.
+                              * ``"f0_lt_1"``  — analytic F0 minimum below
+                                1.0 (Filter 2).
+                              * ``"boundary_extrap"`` — extrapolation /
+                                boundary error (Filter 3).
+    """
+    stats: dict = {}
+    best_combo: Optional[tuple] = None
     best_dist = np.inf
     for combo in combos:
         params = params_store[combo]
@@ -198,26 +226,35 @@ def _select_winner(
         resid = F_row - F0_analytic.astype(np.float64)
         neg = resid[resid < 0]
         if len(neg) <= 10:
+            stats[combo] = {"med_neg": None, "score": None,
+                            "filter_failure": "few_neg_residuals"}
             continue
         med_neg = float(np.median(np.abs(neg)))
         if not np.isfinite(med_neg):
+            stats[combo] = {"med_neg": None, "score": None,
+                            "filter_failure": "med_neg_not_finite"}
             continue
+        score = abs(med_neg - target)
 
         # Filter 2 (doc §7): analytic (unclamped) F0 min >= 1.0
         f0_analytic = sum_of_exps(params, t_rel)
         if float(f0_analytic.min()) < 1.0:
+            stats[combo] = {"med_neg": med_neg, "score": score,
+                            "filter_failure": "f0_lt_1"}
             continue
 
         # Filter 3 (doc §7): no extrapolation error (reuse already-computed f0_analytic)
         if _boundary_fit_error(params, F_row, t_rel, dt, f0=f0_analytic):
+            stats[combo] = {"med_neg": med_neg, "score": score,
+                            "filter_failure": "boundary_extrap"}
             continue
 
-        dist = abs(med_neg - target)
-        if dist < best_dist:
-            best_dist = dist
+        stats[combo] = {"med_neg": med_neg, "score": score, "filter_failure": None}
+        if score < best_dist:
+            best_dist = score
             best_combo = combo
 
-    return best_combo
+    return best_combo, stats
 
 
 def _is_low_f0(
@@ -266,17 +303,55 @@ def _process_roi(
     --------
     n_passes          : int — number of passes run (1, 2, or 3)
     winner_combo      : (c_pos, c_neg) — final accepted winner
-    winner_params     : (7,) float64 — model parameters of the winner
+    winner_params     : (7,) float64 — model parameters of the winner.
+                        Convenience shortcut for ``log[f"pass{winner_pass}"][winner_combo]["params"]``.
+    winner_pass       : 1 | 2 | 3 — which pass produced the winning fit.
     pass1_trigger     : "low_f0" | "no_winner" — why Pass 2 was entered (None if Pass 1 won)
     pass1_winner      : (c_pos, c_neg) | None — best Pass 1 combo before low_f0 check;
                         None if no combo passed eligibility filters
     pass2_winner      : (c_pos, c_neg) | None — best Pass 2 combo;
                         None means all combos failed eligibility → Pass 3 was entered
-    pass1             : {combo: {"irls_nit": int, "converged": bool}, ...}
-    pass2             : same format as pass1, or None if Pass 2 was not entered
+    pass1             : {combo: {<per-combo entry>}, ...}
+    pass2             : same shape as pass1, or None if Pass 2 was not entered
     pass2_sigma_relax : {combo: float, ...} or None
-    pass3             : {combo: {"irls_nit": int, "converged": bool, "used_x0_B": bool}, ...}
-                        or None if not run
+    pass3             : same shape as pass1 plus an extra ``used_x0_B`` bool,
+                        or None if Pass 3 was not run
+
+    Per-combo entry shape (in ``pass1`` / ``pass2`` / ``pass3``)
+    ------------------------------------------------------------
+    Every combo gets an entry — the winner is stored alongside the losers with
+    the same fields; identify the winner via ``log["winner_combo"]`` and
+    ``log["winner_pass"]``.
+
+    - ``irls_nit``       : int     — IRLS iterations to convergence.
+    - ``converged``      : bool    — IRLS converged (True) or hit max-iters (False).
+    - ``params``         : (7,) float64 — fitted parameter vector
+                           ``[b_inf, b_slow, t_slow, b_fast, t_fast, b_bright, t_bright]``.
+    - ``med_neg``        : float | None — median absolute negative residual.
+                           ``None`` only if Filter 1 rejected the combo (fewer
+                           than 10 negative residuals, or non-finite median).
+    - ``score``          : float | None — ``abs(med_neg - target)``; the value
+                           the winner selection minimizes. ``None`` iff
+                           ``med_neg`` is ``None``. Populated for combos
+                           rejected by Filter 2 / Filter 3 so callers can rank
+                           ineligible combos by structural distance to target.
+    - ``filter_failure`` : str | None — eligibility tag, ``None`` for combos
+                           that passed all 3 filters. Tags:
+                             * ``"few_neg_residuals"`` — Filter 1 count check.
+                             * ``"med_neg_not_finite"`` — Filter 1 finiteness check.
+                             * ``"f0_lt_1"`` — Filter 2 (analytic F0 minimum < 1.0).
+                             * ``"boundary_extrap"`` — Filter 3 (extrapolation error).
+    - ``used_x0_B``      : bool — Pass 3 only — True if the alt-x0 path with
+                           the b_bright lower-bound clamp won the per-combo
+                           A vs B loss comparison.
+
+    Pass-3 absolute-fallback caveat
+    -------------------------------
+    When all combos still fail eligibility after Pass 3, the chosen
+    ``winner_combo`` is ``tukey_param_combos[0]`` (absolute fallback). In that
+    case the winner's own ``pass3`` entry will have ``filter_failure != None`` —
+    the asymmetry is real (no eligible combo was found) and is preserved
+    honestly rather than masked.
     """
     F_row = F_fit[i]
     sigma = float(sigma_all[i])
@@ -289,6 +364,7 @@ def _process_roi(
         "n_passes": 0,
         "winner_combo": None,
         "winner_params": None,
+        "winner_pass": None,
         "pass1_trigger": None,
         "pass1_winner": None,
         "pass2_winner": None,
@@ -306,11 +382,17 @@ def _process_roi(
         p1_analytic[combo], p1_params[combo] = f0, px
         log["pass1"][combo] = {"irls_nit": irls_nit, "converged": converged}
 
-    winner = _select_winner(F_row, p1_analytic, p1_params, tgt, t_rel, dt, tukey_param_combos)
+    winner, p1_stats = _select_winner(
+        F_row, p1_analytic, p1_params, tgt, t_rel, dt, tukey_param_combos
+    )
     log["pass1_winner"] = winner
+    for combo in tukey_param_combos:
+        log["pass1"][combo].update(p1_stats[combo])
+        log["pass1"][combo]["params"] = p1_params[combo]
     if winner is not None:
         if not _is_low_f0(F_row, p1_params[winner], t_rel, min_frac_below_f0):
             log["n_passes"] = 1
+            log["winner_pass"] = 1
             log["winner_combo"] = winner
             log["winner_params"] = p1_params[winner]
             return np.maximum(p1_analytic[winner], noise_floor[i]), p1_params[winner], log
@@ -331,12 +413,18 @@ def _process_roi(
         p2_analytic[combo], p2_params[combo] = f0, px
         log["pass2"][combo] = {"irls_nit": irls_nit, "converged": converged}
 
-    winner = _select_winner(F_row, p2_analytic, p2_params, tgt, t_rel, dt, tukey_param_combos)
+    winner, p2_stats = _select_winner(
+        F_row, p2_analytic, p2_params, tgt, t_rel, dt, tukey_param_combos
+    )
     log["pass2_winner"] = winner
+    for combo in tukey_param_combos:
+        log["pass2"][combo].update(p2_stats[combo])
+        log["pass2"][combo]["params"] = p2_params[combo]
     # Accept Pass 2 winner even if low_f0 — Pass 3 cannot fix a low_f0 winner
     # that already passes the analytic F0 >= 1.0 filter.
     if winner is not None:
         log["n_passes"] = 2
+        log["winner_pass"] = 2
         log["winner_combo"] = winner
         log["winner_params"] = p2_params[winner]
         return np.maximum(p2_analytic[winner], noise_floor[i]), p2_params[winner], log
@@ -376,14 +464,23 @@ def _process_roi(
             "used_x0_B": bool(used_x0_B),
         }
 
-    winner = _select_winner(F_row, p3_analytic, p3_params, tgt, t_rel, dt, tukey_param_combos)
+    winner, p3_stats = _select_winner(
+        F_row, p3_analytic, p3_params, tgt, t_rel, dt, tukey_param_combos
+    )
+    for combo in tukey_param_combos:
+        log["pass3"][combo].update(p3_stats[combo])
+        log["pass3"][combo]["params"] = p3_params[combo]
     if winner is None:
         # All combos still fail eligibility after the b_bright constraint — typically
         # because F0 dips analytically below 1.0 at the start of the fit window even
         # with b_bright clipped (short t_bright + small b_inf).  Degenerate trace.
+        # NOTE: the absolute-fallback combo's pass3 stats entry will have a non-None
+        # filter_failure tag — that asymmetry is real (no eligible combo was found)
+        # and is preserved honestly in the log rather than masked.
         winner = tukey_param_combos[0]  # absolute fallback: first combo
 
     log["n_passes"] = 3
+    log["winner_pass"] = 3
     log["winner_combo"] = winner
     log["winner_params"] = p3_params[winner]
     return np.maximum(p3_analytic[winner], noise_floor[i]), p3_params[winner], log
