@@ -72,55 +72,75 @@ from .dff_config import DffConfig
 # Boundary fit error filter (eligibility filter 3)
 # ---------------------------------------------------------------------------
 
+def _longest_noncrossing(F_roi: np.ndarray, f0: np.ndarray) -> int:
+    """Length of the longest contiguous run where F_roi >= f0."""
+    n = len(F_roi)
+    if n <= 0:
+        return 0
+    mask = (F_roi >= f0).astype(np.int8)
+    if mask.sum() == n:
+        return n
+    padded = np.zeros(n + 2, dtype=np.int8)
+    padded[1:n + 1] = mask
+    d = np.diff(padded)
+    starts = np.where(d == 1)[0]
+    ends = np.where(d == -1)[0]
+    return int((ends - starts).max()) if len(starts) > 0 else 0
+
+
 def _boundary_fit_error(
     params: np.ndarray,
     F_roi: np.ndarray,
     t_rel: np.ndarray,
     dt: float,
     f0: Optional[np.ndarray] = None,
+    win_begin: float = 300.0,
+    nc_threshold: float = 0.98,
+    binf_frac: float = 0.5,
 ) -> bool:
-    """Return True if the fit has a Pattern A or B boundary artifact.
+    """Return True if the fit has a Pattern A boundary artifact at the beginning.
+    (Previous Pattern B for error near the end is removed due to lack of occurrence.)
 
-    Pattern A — b_bright overshoot at the start:
-        F0 dips > 50% below b_inf in the first 600 s, while raw F stays
-        entirely above F0 in the beginning window.
-
-    Pattern B — bleach extrapolation at the end:
-        F0 is still > 50% above b_inf at session end and still falling,
-        while raw F stays entirely below F0 in the end window.
-
-    Entry guard: skip if b_inf <= 0 or t_bright / t_max >= 1.5.
+    Pattern A — F0 dips far below b_inf at the beginning:
+        1. Extend beginning window forward to the first frame where ``F < F0``
+           after ``n_A`` -> ``n_A_ext``.  Skip if ``n_A_ext == T`` (degenerate
+           low-F0 fit, handled by ``_is_low_f0``).
+        2. ``longest_noncrossing(F, F0)`` in ``[:n_A_ext]`` >
+           ``nc_threshold x n_A_ext``.
+        3. ``min(F0[:n_A_ext]) < binf_frac x b_inf`` — F0 dips below
+           ``binf_frac`` of its asymptote.
 
     Parameters
     ----------
-    dt : median frame interval of t_rel in seconds.  Pre-computed once per
+    dt : float
+        Median frame interval of t_rel in seconds.  Pre-computed once per
         ROI and passed in so np.diff(t_rel) is not recomputed per combo.
-    f0 : pre-computed analytic F0 array, or None to compute from params.
+    f0 : np.ndarray, optional
+        Pre-computed analytic F0 array, or None to compute from params.
+    win_begin : float
+        Initial begin-window length in seconds before adaptive extension.
+    nc_threshold : float
+        Fraction of the extended begin window that must be non-crossing
+        (``F >= F0``) to trip Pattern A. Default 0.98 allows up to 2% noise
+        crossings vs. the strict-``all`` predicate of the prior code.
+    binf_frac : float
+        F0 minimum must fall below ``binf_frac × b_inf`` for Pattern A.
     """
-    b_inf, b_slow, t_slow, b_fast, t_fast, b_bright, t_bright = [float(p) for p in params]
-    t_max = float(t_rel[-1])
-
-    if b_inf <= 0 or (t_bright / t_max) >= 1.5:
-        return False
+    b_inf = float(params[0])
 
     if f0 is None:
         f0 = sum_of_exps(params, t_rel)
-    n_win = min(int(max(300.0, 0.10 * t_max) / dt), len(t_rel) // 3)
-    n_win_600 = min(n_win, int(600.0 / dt))
 
-    # Pattern A
-    if ((b_inf - float(np.min(f0[:n_win_600]))) / b_inf > 0.5
-            and np.all(F_roi[:n_win] - f0[:n_win] >= 0)):
-        return True
+    T = len(t_rel)
+    n_A = min(int(win_begin / dt), T // 2)
 
-    # Pattern B — derivative of F0 at t_end
-    d1_last = (- b_slow / t_slow * np.exp(-t_rel[-1] / t_slow)
-               - b_fast / t_fast * np.exp(-t_rel[-1] / t_fast)
-               - b_bright / t_bright * np.exp(-t_rel[-1] / t_bright))
-    if ((float(f0[-1]) - b_inf) / b_inf > 0.5
-            and d1_last < 0
-            and np.all(F_roi[-n_win:] - f0[-n_win:] <= 0)):
-        return True
+    if n_A >= 2:
+        supp_fwd = np.where(F_roi[n_A:] < f0[n_A:])[0]
+        n_A_ext = min(n_A + int(supp_fwd[0]) + 1, T) if len(supp_fwd) > 0 else T
+        if n_A_ext < T:
+            if _longest_noncrossing(F_roi[:n_A_ext], f0[:n_A_ext]) > nc_threshold * n_A_ext:
+                if float(np.min(f0[:n_A_ext])) < binf_frac * b_inf:
+                    return True
 
     return False
 
