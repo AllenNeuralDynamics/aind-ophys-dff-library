@@ -1,8 +1,8 @@
-"""dF/F using the biexp_bright_v1 (triexponential) baseline model.
+"""dF/F using a triexponential baseline fit.
 
 Typical usage
 -------------
-    config = set_dff_config(F, fs=10.0)
+    config = set_dff_config(F, fs=30.0)
     dFF, F0, noise_sd, params, logs = dff(F, config)
 
 If timestamps are irregular (dropped frames, variable rate), pass ts instead:
@@ -10,7 +10,7 @@ If timestamps are irregular (dropped frames, variable rate), pass ts instead:
     dFF, F0, noise_sd, params, logs = dff(F, config)
 
 Or with custom parameters:
-    config = set_dff_config(F, fs=10.0,
+    config = set_dff_config(F, fs=30.0,
                             b_inf_n_frames=500, b_slow_max_factor=3.0,
                             tukey_param_combos=((2, 3), (2, 5), (3, 5)))
     dFF, F0, noise_sd, params, logs = dff(F, config)
@@ -44,11 +44,11 @@ Nomenclature:
                     F0 = max(analytic F0, noise_sd)
                   This is what dff() returns and what dF/F is computed from.
 
-Dependencies
-------------
-It requires baseline_fitting.py
-Baseline_fitting.py requires: jax, scipy, statsmodels,
-aind_ophys_utils (for signal_utils.percentile_filter).
+Notes
+-----
+Imports the generic primitives from aind_ophys_utils.baseline_fitting
+(sum_of_exps, nonlinear_fit, AsymmetricTukeyBiweight) and
+aind_ophys_utils.signal_utils.noise_std (via dff_config.py).
 """
 from __future__ import annotations
 
@@ -549,7 +549,7 @@ def dff(
     config: "DffConfig | dict",
     n_jobs: int = -1,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list]:
-    """Fit biexp_bright_v1 and return dFF, F0, noise_sd, params, and logs.
+    """Fit the triexp baseline and return dFF, F0, noise_sd, params, and logs.
 
     Parameters
     ----------
