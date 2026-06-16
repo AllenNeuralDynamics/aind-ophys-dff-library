@@ -84,6 +84,27 @@ def set_dff_config(
     All parameters are plain numbers (no arrays). The returned DffConfig is
     passed directly to dff().
 
+    Model
+    -----
+    The fit minimizes residuals against the triexponential + suppression
+    baseline model
+
+        F0(t) = b_inf
+              + b_slow   * exp(-t / t_slow)
+              + b_fast   * exp(-t / t_fast)
+              + b_bright * exp(-t / t_bright)        # b_bright ≤ 0
+
+    The bounds returned in ``bounds_all`` encode the sign convention:
+    ``b_inf``, ``b_slow``, ``b_fast`` are constrained non-negative;
+    ``b_bright`` is constrained non-positive (the suppression term, stored
+    as a negative amplitude). Equivalence with the older "biexp+bright"
+    form
+
+        F0 = b_inf + b_slow*exp(-t/t_slow) + b_fast*exp(-t/t_fast)
+                  − |b_bright_old| * exp(-t/t_bright)
+
+    is recovered by ``b_bright_new = −b_bright_old``.
+
     Parameters
     ----------
     F : (N, T) or (T,) array
@@ -217,7 +238,7 @@ def set_dff_config(
     # Use t_rel (not fs) so this is correct whether ts or fs was provided.
     n_fast_win = max(1, min(int(np.searchsorted(t_rel - t_rel[0], b_fast_ptp_window_s)), T_fit))
     b_fast_ubs = (np.percentile(F_fit[:, :n_fast_win], 99, axis=1)
-                - np.percentile(F_fit[:, :n_fast_win], 1, axis=1)).astype(float)
+                  - np.percentile(F_fit[:, :n_fast_win], 1, axis=1)).astype(float)
 
     b_slow_ubs = (b_slow_max_factor * rptp).astype(float)
     b_bright_ubs = (b_bright_max_factor * rptp).astype(float)
