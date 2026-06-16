@@ -216,11 +216,11 @@ def set_dff_config(
     # b_fast upper bound: robust ptp of first b_fast_ptp_window_s seconds
     # Use t_rel (not fs) so this is correct whether ts or fs was provided.
     n_fast_win = max(1, min(int(np.searchsorted(t_rel - t_rel[0], b_fast_ptp_window_s)), T_fit))
-    fast_ubs = (np.percentile(F_fit[:, :n_fast_win], 99, axis=1)
+    b_fast_ubs = (np.percentile(F_fit[:, :n_fast_win], 99, axis=1)
                 - np.percentile(F_fit[:, :n_fast_win], 1, axis=1)).astype(float)
 
-    amp_ubs = (b_slow_max_factor * rptp).astype(float)
-    bright_ubs = (b_bright_max_factor * rptp).astype(float)
+    b_slow_ubs = (b_slow_max_factor * rptp).astype(float)
+    b_bright_ubs = (b_bright_max_factor * rptp).astype(float)
     b_inf_lbs = (b_inf_lb_factor * p1).astype(float)
 
     t_slow_lb = max(t_slow_min_s, t_slow_min_tmax_factor * t_max)
@@ -245,11 +245,11 @@ def set_dff_config(
     bounds_all = [
         [
             (float(b_inf_lbs[i]), None),         # 0: b_inf  >= b_inf_lb_factor * P1(F)
-            (0.0, float(amp_ubs[i])),            # 1: b_slow ∈ [0, b_slow_max_factor * rptp]
+            (0.0, float(b_slow_ubs[i])),            # 1: b_slow ∈ [0, b_slow_max_factor * rptp]
             (t_slow_lb, t_high),                 # 2: t_slow
-            (0.0, float(fast_ubs[i])),           # 3: b_fast ∈ [0, rptp of first 300 s]
+            (0.0, float(b_fast_ubs[i])),           # 3: b_fast ∈ [0, rptp of first 300 s]
             (t_fast_min_s, t_fast_max_s),        # 4: t_fast
-            (-float(bright_ubs[i]), 0.0),        # 5: b_bright ∈ [-b_bright_max_factor*rptp, 0]
+            (-float(b_bright_ubs[i]), 0.0),        # 5: b_bright ∈ [-b_bright_max_factor*rptp, 0]
             (t_bright_lb, t_high),               # 6: t_bright
         ]
         for i in range(N)
