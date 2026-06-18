@@ -171,11 +171,10 @@ def _fit_one(
     bounds: list,
     M: AsymmetricTukeyBiweight,
     fixed_sigma: float,
-) -> Tuple[np.ndarray, np.ndarray, int, bool]:
+) -> Tuple[np.ndarray, np.ndarray, bool]:
     """Single-pass IRLS for one ROI, one combo.
 
-    Returns (F0_analytic, params, irls_nit, converged).
-    irls_nit: number of IRLS outer reweighting iterations.
+    Returns (F0_analytic, params, converged).
     converged: whether the scipy optimizer succeeded in the final IRLS step.
     """
     # float64 is required: float32 causes premature L-BFGS-B convergence
@@ -188,13 +187,11 @@ def _fit_one(
         fixed_sigma=fixed_sigma,
         maxiter=5,
         tol=1e-3,
-        sigma_relax_threshold=0.0,    # disable internal sigma relax
         backend="jax",
         dtype=jnp.float64,
     )
     return (np.asarray(F0_analytic, dtype=np.float32),
             np.asarray(res.x, dtype=np.float64),
-            int(getattr(res, "irls_nit", -1)),
             bool(getattr(res, "success", False)))
 
 
@@ -343,7 +340,6 @@ def _process_roi(  # noqa: C901
     the same fields; identify the winner via ``log["winner_combo"]`` and
     ``log["winner_pass"]``.
 
-    - ``irls_nit``       : int     — IRLS iterations to convergence.
     - ``converged``      : bool    — IRLS converged (True) or hit max-iters (False).
     - ``params``         : (7,) float64 — fitted parameter vector
                            ``[b_inf, b_slow, t_slow, b_fast, t_fast, b_bright, t_bright]``.
@@ -398,9 +394,9 @@ def _process_roi(  # noqa: C901
     p1_analytic, p1_params = {}, {}
     for combo in tukey_param_combos:
         M = AsymmetricTukeyBiweight(c_pos=combo[0], c_neg=combo[1])
-        f0, px, irls_nit, converged = _fit_one(F_row, t_rel, x0, bounds, M, sigma)
+        f0, px, converged = _fit_one(F_row, t_rel, x0, bounds, M, sigma)
         p1_analytic[combo], p1_params[combo] = f0, px
-        log["pass1"][combo] = {"irls_nit": irls_nit, "converged": converged}
+        log["pass1"][combo] = {"converged": converged}
 
     winner, p1_stats = _select_winner(
         F_row, p1_analytic, p1_params, tgt, t_rel, dt, tukey_param_combos
@@ -429,9 +425,9 @@ def _process_roi(  # noqa: C901
         sr = _compute_sigma_relax(M, sigma)
         sigma_relax[combo] = sr
         log["pass2_sigma_relax"][combo] = sr
-        f0, px, irls_nit, converged = _fit_one(F_row, t_rel, x0, bounds, M, sr)
+        f0, px, converged = _fit_one(F_row, t_rel, x0, bounds, M, sr)
         p2_analytic[combo], p2_params[combo] = f0, px
-        log["pass2"][combo] = {"irls_nit": irls_nit, "converged": converged}
+        log["pass2"][combo] = {"converged": converged}
 
     winner, p2_stats = _select_winner(
         F_row, p2_analytic, p2_params, tgt, t_rel, dt, tukey_param_combos
@@ -468,8 +464,8 @@ def _process_roi(  # noqa: C901
         x0_B = px2.astype(np.float64).copy()
         x0_B[5] = max(float(x0_B[5]), -b_bright_mag)
 
-        f0_A, px_A, nit_A, conv_A = _fit_one(F_row, t_rel, x0,   bounds_p3, M, sr)
-        f0_B, px_B, nit_B, conv_B = _fit_one(F_row, t_rel, x0_B, bounds_p3, M, sr)
+        f0_A, px_A, conv_A = _fit_one(F_row, t_rel, x0,   bounds_p3, M, sr)
+        f0_B, px_B, conv_B = _fit_one(F_row, t_rel, x0_B, bounds_p3, M, sr)
 
         loss_A = float(np.sum(M_np.rho((F_row - f0_A.astype(np.float64)) / sr)))
         loss_B = float(np.sum(M_np.rho((F_row - f0_B.astype(np.float64)) / sr)))
@@ -479,7 +475,6 @@ def _process_roi(  # noqa: C901
         else:
             p3_analytic[combo], p3_params[combo] = f0_A, px_A
         log["pass3"][combo] = {
-            "irls_nit": nit_B if used_x0_B else nit_A,
             "converged": conv_B if used_x0_B else conv_A,
             "used_x0_B": bool(used_x0_B),
         }
