@@ -17,7 +17,7 @@ readme = "README.md"
 version = "0.0.0"
 
 dependencies = [
-    'aind-ophys-utils @ git+https://github.com/AllenNeuralDynamics/aind-ophys-utils.git@a36b416',
+    'aind-ophys-utils==0.1.0',
     'joblib==1.5.3',
 ]
 
