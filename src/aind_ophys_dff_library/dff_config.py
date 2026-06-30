@@ -38,6 +38,9 @@ class DffConfig:
         Threshold for the low-F0 check in Pass 1.
     tukey_param_combos : tuple of (c_pos, c_neg) pairs
         Asymmetric Tukey biweight thresholds swept during fitting.
+    fallback_long_window : float
+        Percentile-baseline window (seconds) for the absolute fallback
+        when all triexp combos fail eligibility through Pass 3.
     """
 
     params: dict = field(default_factory=dict, kw_only=True)
@@ -48,6 +51,7 @@ class DffConfig:
     sigma_all: np.ndarray
     min_frac_below_f0: float
     tukey_param_combos: Tuple[Tuple[int, int], ...]
+    fallback_long_window: float
 
 
 def set_dff_config(
@@ -78,6 +82,8 @@ def set_dff_config(
     tukey_param_combos: Tuple[Tuple[int, int], ...] = (
         (2, 3), (2, 4), (2, 5), (3, 4), (3, 5)
     ),
+    # absolute-fallback (percentile baseline when all triexp combos fail eligibility)
+    fallback_long_window: float = 180.0,
 ) -> DffConfig:
     """Pre-compute per-ROI initial values, bounds, and noise estimates.
 
@@ -158,6 +164,12 @@ def set_dff_config(
         Asymmetric Tukey biweight thresholds swept during fitting.
         c_pos / c_neg are the rejection widths (in units of sigma) above /
         below the current F0.  Default: (2,3) (2,4) (2,5) (3,4) (3,5).
+    fallback_long_window : float
+        Percentile-baseline window in seconds for the absolute fallback
+        (triggered when all triexp combos fail eligibility filters even
+        after Pass 3). Passed to ``aind_ophys_utils.dff(F, long_window=...)``;
+        differs from utils.dff's own default (60) because triexp-style
+        traces are longer and slower-varying. Default 180.0.
 
     Returns
     -------
@@ -302,6 +314,7 @@ def set_dff_config(
             "t_high_factor":            float(t_high_factor),
             "min_frac_below_f0":        float(min_frac_below_f0),
             "tukey_param_combos":       [list(c) for c in tukey_param_combos],
+            "fallback_long_window":     float(fallback_long_window),
         },
         n_skip=n_skip,
         t_rel=t_rel,
@@ -310,4 +323,5 @@ def set_dff_config(
         sigma_all=sigma_all,
         min_frac_below_f0=min_frac_below_f0,
         tukey_param_combos=tukey_param_combos,
+        fallback_long_window=fallback_long_window,
     )
