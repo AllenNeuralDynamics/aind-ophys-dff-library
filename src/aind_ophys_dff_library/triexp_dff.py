@@ -306,6 +306,7 @@ def _process_roi(  # noqa: C901
     sigma_all: np.ndarray,
     tukey_param_combos: tuple,
     noise_floor: np.ndarray,
+    fallback_long_window: float,
     min_frac_below_f0: float = 0.05,
 ) -> Tuple[np.ndarray, np.ndarray, dict]:
     """Run all 3 passes for ROI i.
@@ -319,9 +320,13 @@ def _process_roi(  # noqa: C901
     Log keys
     --------
     n_passes          : int — number of passes run (1, 2, or 3)
-    winner_combo      : (c_pos, c_neg) — final accepted winner
-    winner_params     : (7,) float64 — model parameters of the winner. Convenience
-                        shortcut for ``log[f"pass{winner_pass}"][winner_combo]["params"]``.
+    winner_combo      : (c_pos, c_neg) | None — final accepted winner. ``None``
+                        when the absolute fallback engaged (no triexp combo
+                        passed eligibility filters even after Pass 3);
+                        see ``fallback_engaged``.
+    winner_params     : (7,) float64 — model parameters of the winner. All NaN
+                        when ``fallback_engaged`` is True (the percentile
+                        fallback produces no triexp model parameters).
     winner_pass       : 1 | 2 | 3 — which pass produced the winning fit.
     pass1_trigger     : "low_f0" | "no_winner" — why Pass 2 was entered (None if Pass 1 won)
     pass1_winner      : (c_pos, c_neg) | None — best Pass 1 combo before low_f0 check;
@@ -333,6 +338,11 @@ def _process_roi(  # noqa: C901
     pass2_sigma_relax : {combo: float, ...} or None
     pass3             : same shape as pass1 plus an extra ``used_x0_B`` bool,
                         or None if Pass 3 was not run
+    fallback_engaged  : bool | None — True iff the absolute fallback fired (all
+                        triexp combos failed eligibility through Pass 3, so F0
+                        was computed via
+                        ``aind_ophys_utils.dff(F, long_window=config.fallback_long_window)``).
+                        ``None`` (default) when fallback did not fire — most ROIs.
 
     Per-combo entry shape (in ``pass1`` / ``pass2`` / ``pass3``)
     ------------------------------------------------------------
@@ -361,13 +371,17 @@ def _process_roi(  # noqa: C901
                            the b_bright lower-bound clamp won the per-combo
                            A vs B loss comparison.
 
-    Pass-3 absolute-fallback caveat
-    -------------------------------
-    When all combos still fail eligibility after Pass 3, the chosen
-    ``winner_combo`` is ``tukey_param_combos[0]`` (absolute fallback). In that
-    case the winner's own ``pass3`` entry will have ``filter_failure != None`` —
-    the asymmetry is real (no eligible combo was found) and is preserved
-    honestly rather than masked.
+    Pass-3 absolute fallback
+    ------------------------
+    When all combos fail eligibility through Pass 3, the F0 is replaced by
+    the percentile baseline from ``aind_ophys_utils.dff(F, long_window=
+    config.fallback_long_window)``. In that case ``winner_combo`` is
+    ``None`` and ``winner_params`` is ``np.full(7, np.nan)`` —
+    ``fallback_engaged`` is set to ``True`` as an explicit signal.
+
+    The percentile baseline is still clamped to the per-ROI noise floor
+    (``np.maximum(baseline_pct, noise_floor[i])``) for consistency with
+    the triexp path's clamping.
     """
     F_row = F_fit[i]
     sigma = float(sigma_all[i])
@@ -388,6 +402,7 @@ def _process_roi(  # noqa: C901
         "pass2": None,
         "pass2_sigma_relax": None,
         "pass3": None,
+        "fallback_engaged": None,
     }
 
     # ── Pass 1: standard IRLS ─────────────────────────────────────────────
@@ -485,20 +500,29 @@ def _process_roi(  # noqa: C901
     for combo in tukey_param_combos:
         log["pass3"][combo].update(p3_stats[combo])
         log["pass3"][combo]["params"] = p3_params[combo]
-    if winner is None:
-        # All combos still fail eligibility after the b_bright constraint — typically
-        # because F0 dips analytically below 1.0 at the start of the fit window even
-        # with b_bright clipped (short t_bright + small b_inf).  Degenerate trace.
-        # NOTE: the absolute-fallback combo's pass3 stats entry will have a non-None
-        # filter_failure tag — that asymmetry is real (no eligible combo was found)
-        # and is preserved honestly in the log rather than masked.
-        winner = tukey_param_combos[0]  # absolute fallback: first combo
 
     log["n_passes"] = 3
     log["winner_pass"] = 3
-    log["winner_combo"] = winner
-    log["winner_params"] = p3_params[winner]
-    return np.maximum(p3_analytic[winner], noise_floor[i]), p3_params[winner], log
+
+    if winner is not None:
+        log["winner_combo"] = winner
+        log["winner_params"] = p3_params[winner]
+        return np.maximum(p3_analytic[winner], noise_floor[i]), p3_params[winner], log
+
+    # fallback: call percentile dff
+    from aind_ophys_utils import dff as _utils_dff
+    fs = 1.0 / float(np.median(np.diff(t_rel)))
+    _, baseline_pct, _ = _utils_dff.dff(
+        F_row, long_window=fallback_long_window, fs=fs, n_jobs=1,
+    )
+    log["winner_combo"] = None
+    log["winner_params"] = np.full(7, np.nan, dtype=np.float64)
+    log["fallback_engaged"] = True
+    return (
+        np.maximum(baseline_pct.astype(np.float32), noise_floor[i]),
+        np.full(7, np.nan, dtype=np.float64),
+        log,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -610,7 +634,8 @@ def dff(
     noise_floor = sigma_all.astype(np.float32)
 
     args = (F_fit, t_rel, x0_all, bounds_all,
-            sigma_all, tukey_param_combos, noise_floor, min_frac_below_f0)
+            sigma_all, tukey_param_combos, noise_floor,
+            config.fallback_long_window, min_frac_below_f0)
 
     if n_jobs == 1:
         rows = [_process_roi(i, *args) for i in range(N)]
