@@ -35,7 +35,7 @@ Three-pass fitting (at ROI level, not per-combo):
 
 Winner selection:
   Apply three eligibility filters per combo (analytic F0 min ≥ 1,
-  finite med_neg, no extrapolation error), then pick the combo whose
+  finite med_neg, no boundary fit error), then pick the combo whose
   median |negative residual| is closest to 0.674 * noise_std.
 
 Nomenclature:
@@ -171,6 +171,7 @@ def _fit_one(
     bounds: list,
     M: AsymmetricTukeyBiweight,
     fixed_sigma: float,
+    sigma_anneal_steps: int = 4,
 ) -> Tuple[np.ndarray, np.ndarray, bool]:
     """Single-pass IRLS for one ROI, one combo.
 
@@ -187,6 +188,7 @@ def _fit_one(
         fixed_sigma=fixed_sigma,
         maxiter=5,
         tol=1e-3,
+        sigma_anneal_steps=sigma_anneal_steps,
         backend="jax",
         dtype=jnp.float64,
     )
@@ -229,8 +231,8 @@ def _select_winner(
                                 count check but ``med_neg`` was non-finite.
                               * ``"f0_lt_1"``  — analytic F0 minimum below
                                 1.0 (Filter 2).
-                              * ``"boundary_extrap"`` — extrapolation /
-                                boundary error (Filter 3).
+                              * ``"boundary_fit_error"`` — boundary fit
+                                error (Filter 3).
     """
     stats: dict = {}
     best_combo: Optional[tuple] = None
@@ -247,6 +249,9 @@ def _select_winner(
                             "filter_failure": "few_neg_residuals"}
             continue
         med_neg = float(np.median(np.abs(neg)))
+        # This condition may not ever be met, since NaN med_neg is when there is
+        # no negative values (already handled by the len(neg) <= 10 check above).
+        # TODO: check if this filter is necessary.
         if not np.isfinite(med_neg):
             stats[combo] = {"med_neg": None, "score": None,
                             "filter_failure": "med_neg_not_finite"}
@@ -260,10 +265,10 @@ def _select_winner(
                             "filter_failure": "f0_lt_1"}
             continue
 
-        # Filter 3 (doc §7): no extrapolation error (reuse already-computed f0_analytic)
+        # Filter 3 (doc §7): boundary fit error (reuse already-computed f0_analytic)
         if _boundary_fit_error(params, F_row, t_rel, dt, f0=f0_analytic):
             stats[combo] = {"med_neg": med_neg, "score": score,
-                            "filter_failure": "boundary_extrap"}
+                            "filter_failure": "boundary_fit_error"}
             continue
 
         stats[combo] = {"med_neg": med_neg, "score": score, "filter_failure": None}
@@ -307,6 +312,7 @@ def _process_roi(  # noqa: C901
     tukey_param_combos: tuple,
     noise_floor: np.ndarray,
     fallback_long_window: float,
+    sigma_anneal_steps: int,
     min_frac_below_f0: float = 0.05,
 ) -> Tuple[np.ndarray, np.ndarray, dict]:
     """Run all 3 passes for ROI i.
@@ -366,7 +372,7 @@ def _process_roi(  # noqa: C901
                              * ``"few_neg_residuals"`` — Filter 1 count check.
                              * ``"med_neg_not_finite"`` — Filter 1 finiteness check.
                              * ``"f0_lt_1"`` — Filter 2 (analytic F0 minimum < 1.0).
-                             * ``"boundary_extrap"`` — Filter 3 (extrapolation error).
+                             * ``"boundary_fit_error"`` — Filter 3 (boundary fit error).
     - ``used_x0_B``      : bool — Pass 3 only — True if the alt-x0 path with
                            the b_bright lower-bound clamp won the per-combo
                            A vs B loss comparison.
@@ -409,7 +415,7 @@ def _process_roi(  # noqa: C901
     p1_analytic, p1_params = {}, {}
     for combo in tukey_param_combos:
         M = AsymmetricTukeyBiweight(c_pos=combo[0], c_neg=combo[1])
-        f0, px, converged = _fit_one(F_row, t_rel, x0, bounds, M, sigma)
+        f0, px, converged = _fit_one(F_row, t_rel, x0, bounds, M, sigma, sigma_anneal_steps)
         p1_analytic[combo], p1_params[combo] = f0, px
         log["pass1"][combo] = {"converged": converged}
 
@@ -432,6 +438,10 @@ def _process_roi(  # noqa: C901
         log["pass1_trigger"] = "no_winner"
 
     # ── Pass 2: sigma relaxation ──────────────────────────────────────────
+    # This may not be necessary when using sigma annealing.
+    # TODO: Check if we need to bypass Pass 2 when sigma annealing is used
+    # (sigma_anneal_steps > 1, fixed_sigma is not None,
+    # ref: aind_ophys_utils.baseline_fitting.nonlinear_fit).
     p2_analytic, p2_params, sigma_relax = {}, {}, {}
     log["pass2"] = {}
     log["pass2_sigma_relax"] = {}
@@ -440,7 +450,7 @@ def _process_roi(  # noqa: C901
         sr = _compute_sigma_relax(M, sigma)
         sigma_relax[combo] = sr
         log["pass2_sigma_relax"][combo] = sr
-        f0, px, converged = _fit_one(F_row, t_rel, x0, bounds, M, sr)
+        f0, px, converged = _fit_one(F_row, t_rel, x0, bounds, M, sr, sigma_anneal_steps)
         p2_analytic[combo], p2_params[combo] = f0, px
         log["pass2"][combo] = {"converged": converged}
 
@@ -479,8 +489,8 @@ def _process_roi(  # noqa: C901
         x0_B = px2.astype(np.float64).copy()
         x0_B[5] = max(float(x0_B[5]), -b_bright_mag)
 
-        f0_A, px_A, conv_A = _fit_one(F_row, t_rel, x0,   bounds_p3, M, sr)
-        f0_B, px_B, conv_B = _fit_one(F_row, t_rel, x0_B, bounds_p3, M, sr)
+        f0_A, px_A, conv_A = _fit_one(F_row, t_rel, x0,   bounds_p3, M, sr, sigma_anneal_steps)
+        f0_B, px_B, conv_B = _fit_one(F_row, t_rel, x0_B, bounds_p3, M, sr, sigma_anneal_steps)
 
         loss_A = float(np.sum(M_np.rho((F_row - f0_A.astype(np.float64)) / sr)))
         loss_B = float(np.sum(M_np.rho((F_row - f0_B.astype(np.float64)) / sr)))
@@ -635,7 +645,8 @@ def dff(
 
     args = (F_fit, t_rel, x0_all, bounds_all,
             sigma_all, tukey_param_combos, noise_floor,
-            config.fallback_long_window, min_frac_below_f0)
+            config.fallback_long_window, config.sigma_anneal_steps,
+            min_frac_below_f0)
 
     if n_jobs == 1:
         rows = [_process_roi(i, *args) for i in range(N)]

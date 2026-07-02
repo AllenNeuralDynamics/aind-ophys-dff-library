@@ -41,6 +41,10 @@ class DffConfig:
     fallback_long_window : float
         Percentile-baseline window (seconds) for the absolute fallback
         when all triexp combos fail eligibility through Pass 3.
+    sigma_anneal_steps : int
+        Number of geometric IRLS-sigma annealing steps used by
+        ``nonlinear_fit`` inside every triexp fit. ``1`` or ``2`` disable
+        annealing (single-jump).
     """
 
     params: dict = field(default_factory=dict, kw_only=True)
@@ -52,6 +56,7 @@ class DffConfig:
     min_frac_below_f0: float
     tukey_param_combos: Tuple[Tuple[int, int], ...]
     fallback_long_window: float
+    sigma_anneal_steps: int
 
 
 def set_dff_config(
@@ -84,6 +89,8 @@ def set_dff_config(
     ),
     # absolute-fallback (percentile baseline when all triexp combos fail eligibility)
     fallback_long_window: float = 180.0,
+    # IRLS sigma-annealing schedule (utils.baseline_fitting.nonlinear_fit)
+    sigma_anneal_steps: int = 4,
 ) -> DffConfig:
     """Pre-compute per-ROI initial values, bounds, and noise estimates.
 
@@ -170,6 +177,13 @@ def set_dff_config(
         after Pass 3). Passed to ``aind_ophys_utils.dff(F, long_window=...)``;
         differs from utils.dff's own default (60) because triexp-style
         traces are longer and slower-varying. Default 180.0.
+    sigma_anneal_steps : int
+        Number of geometric IRLS-sigma annealing steps passed to
+        ``aind_ophys_utils.baseline_fitting.nonlinear_fit``. Sigma is annealed
+        from ``max(fixed_sigma, MAD(OLS_residuals))`` down to ``fixed_sigma``
+        over this many iterations, then held at ``fixed_sigma`` for the
+        remainder. ``1`` or ``2`` disable annealing (single-jump); ``>=3``
+        enables graduated annealing. Default 4.
 
     Returns
     -------
@@ -315,6 +329,7 @@ def set_dff_config(
             "min_frac_below_f0":        float(min_frac_below_f0),
             "tukey_param_combos":       [list(c) for c in tukey_param_combos],
             "fallback_long_window":     float(fallback_long_window),
+            "sigma_anneal_steps":       int(sigma_anneal_steps),
         },
         n_skip=n_skip,
         t_rel=t_rel,
@@ -324,4 +339,5 @@ def set_dff_config(
         min_frac_below_f0=min_frac_below_f0,
         tukey_param_combos=tukey_param_combos,
         fallback_long_window=fallback_long_window,
+        sigma_anneal_steps=sigma_anneal_steps,
     )
