@@ -208,8 +208,10 @@ def _select_winner(
 ) -> Tuple[Optional[tuple], dict]:
     """Apply eligibility filters and return ``(winner_combo, per_combo_stats)``.
 
-    ``winner_combo`` is the eligible combo whose ``score = abs(med_neg - target)``
-    is minimized, or ``None`` if no combo passed all three eligibility filters.
+    ``winner_combo`` is the eligible combo whose ``abs(score)`` is minimized,
+    where ``score = log(med_neg / target)`` (signed log ratio: negative =
+    under-fit F0, positive = over-fit F0). ``None`` if no combo passed all
+    three eligibility filters.
 
     ``per_combo_stats[combo]`` is a dict with three fields, populated for
     every combo (including ineligible ones):
@@ -217,11 +219,15 @@ def _select_winner(
     - ``med_neg``         : float | None — median absolute negative residual.
                             ``None`` only if Filter 1 (≥10 negative residuals
                             with finite median) rejected the combo.
-    - ``score``           : float | None — ``abs(med_neg - target)``. ``None``
-                            iff ``med_neg`` is ``None``. Defined for combos
-                            rejected by Filter 2 / Filter 3 so callers can
-                            rank ineligible combos by structural distance to
-                            the target if they wish.
+    - ``score``           : float | None — ``log(med_neg / target)``, signed.
+                            Negative = ``med_neg < target`` (under-fit F0);
+                            positive = ``med_neg > target`` (over-fit F0);
+                            0 = matches target. Winner selection minimizes
+                            ``abs(score)``. ``None`` iff ``med_neg`` is
+                            ``None``. Defined for combos rejected by
+                            Filter 2 / Filter 3 so callers can rank
+                            ineligible combos by their signed ratio distance
+                            to the target if they wish.
     - ``filter_failure``  : str | None — eligibility tag. ``None`` means the
                             combo passed all filters and is winner-eligible.
                             Possible failure tags:
@@ -256,7 +262,7 @@ def _select_winner(
             stats[combo] = {"med_neg": None, "score": None,
                             "filter_failure": "med_neg_not_finite"}
             continue
-        score = abs(med_neg - target)
+        score = float(np.log(med_neg / target))
 
         # Filter 2 (doc §7): analytic (unclamped) F0 min >= 1.0
         f0_analytic = sum_of_exps(params, t_rel)
@@ -272,8 +278,8 @@ def _select_winner(
             continue
 
         stats[combo] = {"med_neg": med_neg, "score": score, "filter_failure": None}
-        if score < best_dist:
-            best_dist = score
+        if abs(score) < best_dist:
+            best_dist = abs(score)
             best_combo = combo
 
     return best_combo, stats
@@ -362,11 +368,15 @@ def _process_roi(  # noqa: C901
     - ``med_neg``        : float | None — median absolute negative residual.
                            ``None`` only if Filter 1 rejected the combo (fewer
                            than 10 negative residuals, or non-finite median).
-    - ``score``          : float | None — ``abs(med_neg - target)``; the value
-                           the winner selection minimizes. ``None`` iff
-                           ``med_neg`` is ``None``. Populated for combos
-                           rejected by Filter 2 / Filter 3 so callers can rank
-                           ineligible combos by structural distance to target.
+    - ``score``          : float | None — ``log(med_neg / target)``, signed.
+                           Negative = under-fit F0 (med_neg < target);
+                           positive = over-fit F0 (med_neg > target); 0 =
+                           matches target. Winner selection minimizes
+                           ``abs(score)``. ``None`` iff ``med_neg`` is
+                           ``None``. Populated for combos rejected by
+                           Filter 2 / Filter 3 so callers can rank
+                           ineligible combos by their signed ratio distance
+                           to target.
     - ``filter_failure`` : str | None — eligibility tag, ``None`` for combos
                            that passed all 3 filters. Tags:
                              * ``"few_neg_residuals"`` — Filter 1 count check.
