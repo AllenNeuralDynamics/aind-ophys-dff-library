@@ -1,0 +1,166 @@
+"""aind-data-schema v1/v2 metadata reads for dF/F estimation.
+
+A thin, capsule-specific layer over the shared ``aind_pophys_metadata``
+library. The v1/v2 dict paths, schema-version dispatch, and the ``Processing``
+builders live in the shared library; this module only assembles the
+``DFFMetadata`` view and this capsule's ``DataProcess``.
+"""
+
+import os
+from dataclasses import dataclass
+from datetime import datetime as dt
+from pathlib import Path
+from typing import List, Optional
+
+import pytz
+from aind_data_schema.core.processing import DataProcess, Processing
+from aind_data_schema_models.process_names import ProcessName
+from aind_pophys_metadata import fields, io
+from aind_pophys_metadata import processing as shared_processing
+
+_SEATTLE_TZ = pytz.timezone("America/Los_Angeles")
+
+CODE_URL = (
+    "https://github.com/AllenNeuralDynamics/aind-ophys-dff/tree/main/code"
+)
+
+
+@dataclass(frozen=True)
+class DFFMetadata:
+    """Minimal metadata the dF/F capsule consumes.
+
+    ``frame_rate`` sets the baseline-window lengths and the plot time axis, so
+    it is the only field the computation itself needs; the other two are
+    identifiers used for logging.
+    """
+
+    frame_rate: Optional[float] = None
+    subject_id: Optional[str] = None
+    dataset_name: Optional[str] = None
+
+
+def load_dff_metadata(input_dir: Path) -> DFFMetadata:
+    """Read v1/v2 metadata for dF/F from ``input_dir``.
+
+    Dispatches on which core file is present (``acquisition.json`` -> v2,
+    ``session.json`` -> v1). ``frame_rate`` falls back to ``platform.json``
+    when the core file lacks it. ``subject_id`` is read from the core file
+    (canonical) and falls back to ``subject.json``. ``dataset_name`` comes
+    from ``data_description.json``.
+
+    Parameters
+    ----------
+    input_dir : Path
+        Directory searched recursively for the metadata files.
+
+    Returns
+    -------
+    DFFMetadata
+        The minimal fields this capsule consumes.
+
+    Raises
+    ------
+    FileNotFoundError
+        If neither ``acquisition.json`` nor ``session.json`` is found.
+    ValueError
+        If both core files are present (ambiguous input).
+    """
+    input_dir = Path(input_dir)
+    core_path = io.find_acquisition_file(input_dir)
+    version = io.detect_schema_version(core_path)
+    core_raw = io.load_json(core_path)
+
+    platform_path = io.find(input_dir, "platform.json")
+    platform_raw = io.load_json(platform_path) if platform_path else None
+    subject_path = io.find(input_dir, "subject.json")
+    subject_raw = io.load_json(subject_path) if subject_path else None
+    dd_path = io.find(input_dir, "data_description.json")
+    dd_raw = io.load_json(dd_path) if dd_path else None
+
+    return DFFMetadata(
+        frame_rate=fields.get_frame_rate(version, core_raw, platform_raw),
+        subject_id=fields.get_subject_id(core_raw, subject_raw),
+        dataset_name=fields.get_dataset_name(dd_raw),
+    )
+
+
+def build_data_process(
+    parameters: dict,
+    start_time: dt,
+    end_time: dt,
+    input_data: Optional[List[str]] = None,
+    output_path: Optional[str] = None,
+    output_parameters: Optional[dict] = None,
+    error: Optional[BaseException] = None,
+) -> DataProcess:
+    """Construct a v2 DataProcess for dF/F estimation.
+
+    Parameters
+    ----------
+    parameters : dict
+        Capsule configuration parameters (from DFFSettings, plus the resolved
+        triexp config snapshot).
+    start_time : dt
+        Processing start time.
+    end_time : dt
+        Processing end time.
+    input_data : list of str, optional
+        Input data path(s)/asset name(s) for provenance.
+    output_path : str, optional
+        Path to this process's output directory, relative to the results root.
+    output_parameters : dict, optional
+        Actual parameters used and output metrics.
+    error : Exception, optional
+        The exception that terminated the run, or ``None`` on success. The
+        message is recorded in ``notes``.
+
+    Returns
+    -------
+    DataProcess
+        The populated dF/F data process.
+    """
+    notes = (
+        None
+        if error is None
+        else f"Run failed with {type(error).__name__}: {error}"
+    )
+    code = shared_processing.build_code(
+        url=CODE_URL,
+        name="aind-ophys-dff",
+        version=os.getenv("VERSION", ""),
+        parameters=parameters,
+        input_data=input_data,
+    )
+    return shared_processing.build_data_process(
+        process_type=ProcessName.DF_F_ESTIMATION,
+        code=code,
+        start_time=start_time.astimezone(_SEATTLE_TZ),
+        end_time=end_time.astimezone(_SEATTLE_TZ),
+        output_path=output_path,
+        output_parameters=output_parameters,
+        notes=notes,
+        resources=shared_processing.resource_usage(),
+    )
+
+
+def build_processing(data_processes: List[DataProcess]) -> Processing:
+    """Wrap data processes into a full v2 Processing object."""
+    return shared_processing.build_processing(data_processes)
+
+
+def write_processing_json(processing: Processing, output_dir: Path) -> Path:
+    """Serialize a Processing object to ``processing.json``.
+
+    Parameters
+    ----------
+    processing : Processing
+        The processing document to write.
+    output_dir : Path
+        Directory into which ``processing.json`` is written.
+
+    Returns
+    -------
+    Path
+        The path written.
+    """
+    return shared_processing.write_processing_json(processing, output_dir)
