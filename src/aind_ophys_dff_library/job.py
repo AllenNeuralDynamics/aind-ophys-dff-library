@@ -11,16 +11,15 @@ triexponential fit in :mod:`aind_ophys_dff_library.triexp_dff` /
 :mod:`aind_ophys_dff_library.dff_config`, and the rolling-percentile baseline
 in ``aind_ophys_utils.dff``. Only orchestration, IO and QC moved here.
 
-``processing.json`` is written from a ``finally`` block so a failed run still
-leaves a document describing what was attempted, with the error recorded in
-``notes``.
+``processing.json`` is written by the shared ``stage_guard``, which stamps the
+timings and emits the document even when the stage raises, with the error
+recorded in ``notes``.
 """
 
 import inspect
 import json
 import logging
 import os
-from datetime import datetime as dt
 from multiprocessing import Pool
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -28,6 +27,13 @@ from typing import List, Optional, Tuple
 import h5py
 import numpy as np
 from aind_ophys_utils import dff as dff_percentile
+from aind_pophys_metadata.fields import (
+    SCAVENGE_MODE_SINGLE,
+    validate_scavenged_ids,
+)
+from aind_pophys_metadata.paths import find_one, relative_to_root
+from aind_pophys_metadata.processing import collect_upstream_process_names
+from aind_pophys_metadata.runner import StageContext, stage_guard
 from log_schema.main import setup_logging
 from scipy.stats import skew
 
@@ -37,7 +43,6 @@ from .settings import DFFSettings
 from .triexp_dff import dff as triexp_dff
 from .triexp_dff import log_to_jsonable
 from .utils import metadata_utils as mu
-from .utils.paths import relative_to_root
 
 logger = logging.getLogger("Ophys dF/F")
 
@@ -161,18 +166,12 @@ def _locate_extraction(input_dir: Path) -> Tuple[Path, str]:
     ------
     FileNotFoundError
         If no ``*/extraction`` directory or no ``*extraction.h5`` is present.
+        The message names both the pattern and the directory searched.
     """
-    extraction_dir = next(Path(input_dir).rglob(EXTRACTION_GLOB), None)
-    if extraction_dir is None:
-        raise FileNotFoundError(
-            f"No '{EXTRACTION_GLOB}' directory found under {input_dir}; "
-            f"dF/F needs the extraction capsule's output."
-        )
-    extraction_h5 = next(extraction_dir.glob(EXTRACTION_H5_GLOB), None)
-    if extraction_h5 is None:
-        raise FileNotFoundError(
-            f"No '{EXTRACTION_H5_GLOB}' found in {extraction_dir}"
-        )
+    extraction_dir = find_one(input_dir, EXTRACTION_GLOB)
+    extraction_h5 = find_one(
+        extraction_dir, EXTRACTION_H5_GLOB, recursive=False
+    )
     return extraction_h5, extraction_dir.parent.name
 
 
@@ -196,41 +195,6 @@ def _make_output_dir(results_root: Path, unique_id: str) -> Path:
     return output_dir
 
 
-def _resolve_frame_rate(
-    metadata: mu.DFFMetadata, settings: DFFSettings
-) -> float:
-    """Resolve the frame rate from metadata, falling back to the CLI value.
-
-    Parameters
-    ----------
-    metadata : mu.DFFMetadata
-        Metadata read at the start of the run.
-    settings : DFFSettings
-        Parsed settings, providing the CLI fallback.
-
-    Returns
-    -------
-    float
-        The resolved frame rate [Hz].
-
-    Raises
-    ------
-    ValueError
-        If neither the metadata nor the CLI supplies one.
-    """
-    frame_rate = metadata.frame_rate
-    if frame_rate is None:
-        frame_rate = settings.frame_rate
-        logger.warning(
-            "Using CLI fallback frame rate: %s", settings.frame_rate
-        )
-    if frame_rate is None:
-        raise ValueError(
-            "frame_rate could not be resolved from metadata or --frame_rate"
-        )
-    return float(frame_rate)
-
-
 def _n_jobs() -> int:
     """Return the worker count from ``CO_CPUS``, or -1 for all CPUs."""
     return int(os.environ.get("CO_CPUS") or -1)
@@ -242,6 +206,7 @@ def _write_traces_h5(
     dff_traces: np.ndarray,
     baseline: np.ndarray,
     noise: np.ndarray,
+    skewness: np.ndarray,
 ) -> Path:
     """Write the dF/F traces, baseline, noise and skewness to HDF5.
 
@@ -257,6 +222,8 @@ def _write_traces_h5(
         The fitted baselines.
     noise : np.ndarray
         Per-ROI noise estimates.
+    skewness : np.ndarray
+        Per-ROI dF/F skewness.
 
     Returns
     -------
@@ -268,7 +235,7 @@ def _write_traces_h5(
         f.create_dataset("data", data=dff_traces)
         f.create_dataset("baseline", data=baseline)
         f.create_dataset("noise", data=noise)
-        f.create_dataset("skewness", data=skew(dff_traces, axis=1))
+        f.create_dataset("skewness", data=skewness)
     return path
 
 
@@ -372,14 +339,34 @@ def _write_roi_plots(
     ]
 
 
+def _median(values: np.ndarray) -> Optional[float]:
+    """Return the median of ``values``, or ``None`` when it is empty.
+
+    Parameters
+    ----------
+    values : np.ndarray
+        Per-ROI values.
+
+    Returns
+    -------
+    float or None
+        The median, or ``None`` for an empty array.
+    """
+    return float(np.median(values)) if np.size(values) else None
+
+
 def _run_dff(
-    settings: DFFSettings, metadata: mu.DFFMetadata, ctx: dict
+    settings: DFFSettings,
+    metadata: mu.DFFMetadata,
+    extraction_h5: Path,
+    unique_id: str,
+    output_dir: Path,
+    ctx: StageContext,
 ) -> None:
     """Compute dF/F for the staged plane and write every output but processing.
 
-    ``ctx`` is populated as the run progresses so the ``processing.json``
-    writer in ``run()``'s ``finally`` can report partial provenance even when
-    this raises.
+    ``ctx`` is populated as the run progresses so the ``processing.json`` the
+    stage guard writes reports partial provenance even when this raises.
 
     Parameters
     ----------
@@ -387,23 +374,18 @@ def _run_dff(
         Parsed settings.
     metadata : mu.DFFMetadata
         Metadata read at the start of the run.
-    ctx : dict
-        Run context accumulated for the metadata writer.
+    extraction_h5 : Path
+        The upstream extraction output this plane's traces are read from.
+    unique_id : str
+        Plane/FOV identifier.
+    output_dir : Path
+        This plane's dF/F output directory.
+    ctx : StageContext
+        Stage context the guard reads when it writes ``processing.json``.
     """
-    input_dir = Path(settings.input_dir).resolve()
-    results_root = Path(settings.output_dir).resolve()
-
-    extraction_h5, unique_id = _locate_extraction(input_dir)
-    ctx["unique_id"] = unique_id
-    ctx["input_data"] = [relative_to_root(input_dir, extraction_h5)]
-    logger.info("Calculating dF/F for ExperimentID %s", unique_id)
-
-    output_dir = _make_output_dir(results_root, unique_id)
-    ctx["output_dir"] = output_dir
-
     with h5py.File(extraction_h5, "r") as f:
         traces = f["traces/corrected"][()]
-    frame_rate = _resolve_frame_rate(metadata, settings)
+    frame_rate = metadata.frame_rate
 
     if len(traces):
         dff_traces, baseline, noise, logs, config_snapshot = compute_dff(
@@ -415,17 +397,28 @@ def _run_dff(
         )
         dff_traces, baseline, noise = traces, traces, np.asarray([])
         logs, config_snapshot = None, None
+    skewness = skew(dff_traces, axis=1)
 
-    ctx["parameters"] = {
-        **settings.model_dump(mode="json"),
+    # Only resolvable once the traces are loaded, so it cannot go into the
+    # ``Code`` the guard took at entry; the guard merges these over the
+    # up-front parameters when it writes the document.
+    ctx.parameters = {
+        "resolved_frame_rate": frame_rate,
         "triexp_config": config_snapshot,
     }
-    ctx["output_parameters"] = {
+    # Scalar summary statistics describing this step's OUTPUTS, chosen so a
+    # reviewer can triage the plane without opening the traces. Input
+    # parameters belong in ``code.parameters``, never here.
+    ctx.output_parameters = {
         "num_rois": int(traces.shape[0]),
-        "frame_rate": frame_rate,
+        "num_frames": int(traces.shape[1]) if traces.ndim > 1 else 0,
+        "median_noise": _median(noise),
+        "median_dff_skewness": _median(skewness),
     }
 
-    _write_traces_h5(output_dir, unique_id, dff_traces, baseline, noise)
+    _write_traces_h5(
+        output_dir, unique_id, dff_traces, baseline, noise, skewness
+    )
     _write_fit_logs(output_dir, unique_id, logs)
     plot_references = _write_roi_plots(
         settings,
@@ -441,50 +434,6 @@ def _run_dff(
     qc.write_quality_control_json(
         qc.build_quality_control([metric]), output_dir
     )
-
-
-def _write_processing_metadata(
-    settings: DFFSettings,
-    ctx: dict,
-    start_time: dt,
-    error: Optional[BaseException],
-) -> None:
-    """Best-effort writer for processing.json. Never raises.
-
-    Failures here must not mask a dF/F failure already propagating out of
-    ``run()``. Falls back to the results root when the run failed before the
-    per-plane output directory was created.
-
-    Parameters
-    ----------
-    settings : DFFSettings
-        Parsed settings.
-    ctx : dict
-        Run context accumulated by :func:`_run_dff`.
-    start_time : dt
-        Run start time.
-    error : Exception or None
-        The exception that terminated the run, if any.
-    """
-    results_root = Path(settings.output_dir).resolve()
-    output_dir = Path(ctx.get("output_dir") or results_root)
-    try:
-        data_process = mu.build_data_process(
-            parameters=ctx.get("parameters")
-            or settings.model_dump(mode="json"),
-            start_time=start_time,
-            end_time=dt.now(),
-            input_data=ctx.get("input_data"),
-            output_path=relative_to_root(results_root, output_dir),
-            output_parameters=ctx.get("output_parameters"),
-            plane_id=ctx.get("unique_id"),
-            error=error,
-        )
-        mu.write_processing_json(
-            mu.build_processing([data_process]), output_dir
-        )
-    except Exception as proc_exc:
-        logger.error(f"processing.json write failed (non-fatal): {proc_exc}")
 
 
 def _verify_outputs(output_dir: Path) -> None:
@@ -518,9 +467,12 @@ def run(settings: Optional[DFFSettings] = None) -> None:
         through the core v2 schema objects after writing.
     """
     settings = settings or DFFSettings()
-    start_time = dt.now()
+    input_dir = Path(settings.input_dir).resolve()
+    results_root = Path(settings.output_dir).resolve()
 
-    metadata = mu.load_dff_metadata(settings.input_dir)
+    metadata = mu.load_dff_metadata(
+        input_dir, cli_frame_rate=settings.frame_rate
+    )
     setup_logging(
         use_cloudwatch=True,
         model={
@@ -528,20 +480,43 @@ def run(settings: Optional[DFFSettings] = None) -> None:
             "process_name": PROCESS_NAME,
         },
     )
-    logger.info("Starting dF/F", extra={"event_type": "stage_start"})
 
-    ctx: dict = {}
-    run_error: Optional[BaseException] = None
-    try:
-        _run_dff(settings, metadata, ctx)
-        logger.info("dF/F complete", extra={"event_type": "stage_complete"})
-    except BaseException as exc:
-        run_error = exc
-        logger.error("dF/F failed", extra={"event_type": "stage_error"})
-        logger.exception("Unhandled exception")
-        raise
-    finally:
-        _write_processing_metadata(settings, ctx, start_time, run_error)
+    extraction_h5, unique_id = _locate_extraction(input_dir)
+    # The plane id is scavenged from the upstream directory layout, which
+    # guarantees uniqueness but not agreement with the acquisition metadata.
+    # One task sees one plane, so membership is the applicable comparison.
+    validate_scavenged_ids(
+        (unique_id,),
+        metadata.fov_ids,
+        logger,
+        mode=SCAVENGE_MODE_SINGLE,
+    )
+    logger.info("Calculating dF/F for ExperimentID %s", unique_id)
+
+    output_dir = _make_output_dir(results_root, unique_id)
+    code = mu.build_dff_code(
+        parameters=settings.model_dump(mode="json"),
+        input_data=[relative_to_root(input_dir, extraction_h5)],
+    )
+    with stage_guard(
+        output_dir,
+        mu.PROCESS_TYPE,
+        code,
+        plane_id=unique_id,
+        logger=logger,
+        output_path=relative_to_root(results_root, output_dir),
+    ) as ctx:
+        ctx.upstream_names = collect_upstream_process_names(
+            input_dir, exclude=mu.process_name(unique_id)
+        )
+        _run_dff(
+            settings,
+            metadata,
+            extraction_h5,
+            unique_id,
+            output_dir,
+            ctx,
+        )
 
     if settings.verify:
-        _verify_outputs(ctx["output_dir"])
+        _verify_outputs(output_dir)

@@ -1,57 +1,73 @@
 """aind-data-schema v1/v2 metadata reads for dF/F estimation.
 
 A thin, capsule-specific layer over the shared ``aind_pophys_metadata``
-library. The v1/v2 dict paths, schema-version dispatch, and the ``Processing``
-builders live in the shared library; this module only assembles the
-``DFFMetadata`` view and this capsule's ``DataProcess``.
+library. The v1/v2 dict paths, schema-version dispatch, the frame-rate
+resolution ladder and the ``Code``/``Processing`` builders all live in the
+shared library; this module only assembles the ``DFFMetadata`` view and this
+capsule's ``Code`` block.
 """
 
-import os
 from dataclasses import dataclass
-from datetime import datetime as dt
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
-import pytz
-from aind_data_schema.core.processing import DataProcess, Processing
+from aind_data_schema.components.identifiers import Code
 from aind_data_schema_models.process_names import ProcessName
 from aind_pophys_metadata import fields, io
 from aind_pophys_metadata import processing as shared_processing
 
-_SEATTLE_TZ = pytz.timezone("America/Los_Angeles")
+CODE_NAME = "aind-ophys-dff"
+# The shared builder derives both ``code.url`` and ``code.version`` from this
+# distribution name, so the two always describe one artifact: the released
+# backing library, whose version bumps automatically on merge.
+LIBRARY_NAME = "aind-ophys-dff-library"
 
-CODE_URL = (
-    "https://github.com/AllenNeuralDynamics/aind-ophys-dff/tree/main/code"
-)
+PROCESS_TYPE = ProcessName.DF_F_ESTIMATION
 
 
 @dataclass(frozen=True)
 class DFFMetadata:
     """Minimal metadata the dF/F capsule consumes.
 
-    ``frame_rate`` sets the baseline-window lengths and the plot time axis, so
-    it is the only field the computation itself needs; the other two are
-    identifiers used for logging.
+    Attributes
+    ----------
+    frame_rate : float
+        Sampling frequency [Hz]. Sets the baseline-window lengths and the plot
+        time axis, so the computation cannot run without it; it is resolved
+        and validated in :func:`load_dff_metadata` rather than deep inside the
+        run, so a rate-less asset fails with a message naming the file and the
+        schema version.
+    subject_id : str or None
+        Subject identifier, used for logging only.
+    dataset_name : str or None
+        Derived asset name, used for logging only.
+    fov_ids : tuple of str
+        Canonical plane/FOV ids from the acquisition metadata, used to
+        cross-check the plane id scavenged from the input directory layout.
     """
 
-    frame_rate: Optional[float] = None
+    frame_rate: float
     subject_id: Optional[str] = None
     dataset_name: Optional[str] = None
+    fov_ids: Tuple[str, ...] = ()
 
 
-def load_dff_metadata(input_dir: Path) -> DFFMetadata:
+def load_dff_metadata(
+    input_dir: Path, cli_frame_rate: Optional[float] = None
+) -> DFFMetadata:
     """Read v1/v2 metadata for dF/F from ``input_dir``.
 
     Dispatches on which core file is present (``acquisition.json`` -> v2,
     ``session.json`` -> v1). ``frame_rate`` falls back to ``platform.json``
-    when the core file lacks it. ``subject_id`` is read from the core file
-    (canonical) and falls back to ``subject.json``. ``dataset_name`` comes
-    from ``data_description.json``.
+    and then to ``cli_frame_rate``, and is fatal if still unresolved.
 
     Parameters
     ----------
     input_dir : Path
         Directory searched recursively for the metadata files.
+    cli_frame_rate : float, optional
+        Operator-supplied frame rate [Hz], used only when the metadata
+        supplies none.
 
     Returns
     -------
@@ -63,109 +79,70 @@ def load_dff_metadata(input_dir: Path) -> DFFMetadata:
     FileNotFoundError
         If neither ``acquisition.json`` nor ``session.json`` is found.
     ValueError
-        If both core files are present (ambiguous input).
+        If both core files are present (ambiguous input), or if no source
+        supplies a frame rate.
     """
     input_dir = Path(input_dir)
-    core_path = io.find_acquisition_file(input_dir)
-    version = io.detect_schema_version(core_path)
-    core_raw = io.load_json(core_path)
-
-    platform_path = io.find(input_dir, "platform.json")
-    platform_raw = io.load_json(platform_path) if platform_path else None
-    subject_path = io.find(input_dir, "subject.json")
-    subject_raw = io.load_json(subject_path) if subject_path else None
-    dd_path = io.find(input_dir, "data_description.json")
-    dd_raw = io.load_json(dd_path) if dd_path else None
-
+    common = io.load_common(input_dir)
     return DFFMetadata(
-        frame_rate=fields.get_frame_rate(version, core_raw, platform_raw),
-        subject_id=fields.get_subject_id(core_raw, subject_raw),
-        dataset_name=fields.get_dataset_name(dd_raw),
+        frame_rate=fields.resolve_frame_rate(
+            common.version,
+            common.core_raw,
+            common.platform_raw,
+            core_file=common.core_path,
+            input_dir=input_dir,
+            cli_override=cli_frame_rate,
+            required=True,
+        ),
+        subject_id=fields.get_subject_id(common.core_raw, common.subject_raw),
+        dataset_name=fields.get_dataset_name(common.data_description_raw),
+        fov_ids=fields.get_fov_ids(common.version, common.core_raw),
     )
 
 
-def build_data_process(
+def build_dff_code(
     parameters: dict,
-    start_time: dt,
-    end_time: dt,
     input_data: Optional[List[str]] = None,
-    output_path: Optional[str] = None,
-    output_parameters: Optional[dict] = None,
-    plane_id: Optional[str] = None,
-    error: Optional[BaseException] = None,
-) -> DataProcess:
-    """Construct a v2 DataProcess for dF/F estimation.
+) -> Code:
+    """Construct the ``Code`` block identifying this dF/F run.
 
     Parameters
     ----------
     parameters : dict
-        Capsule configuration parameters (from DFFSettings, plus the resolved
-        triexp config snapshot).
-    start_time : dt
-        Processing start time.
-    end_time : dt
-        Processing end time.
+        Input parameters this run was configured with.
     input_data : list of str, optional
         Input data path(s)/asset name(s) for provenance.
-    output_path : str, optional
-        Path to this process's output directory, relative to the results root.
-    output_parameters : dict, optional
-        Actual parameters used and output metrics.
-    plane_id : str, optional
-        Plane/FOV id this run processed. Qualifies the process name so it
-        stays unique once every plane's document is merged.
-    error : Exception, optional
-        The exception that terminated the run, or ``None`` on success. The
-        message is recorded in ``notes``.
 
     Returns
     -------
-    DataProcess
-        The populated dF/F data process.
+    Code
+        The populated code block. ``version`` is the installed backing
+        library's released version, so it is never an empty string in a run
+        where that library is installed - which is every real run.
     """
-    notes = (
-        None
-        if error is None
-        else f"Run failed with {type(error).__name__}: {error}"
-    )
-    code = shared_processing.build_code(
-        url=CODE_URL,
-        name="aind-ophys-dff",
-        version=os.getenv("VERSION", ""),
+    return shared_processing.build_code(
+        CODE_NAME,
+        library_name=LIBRARY_NAME,
         parameters=parameters,
         input_data=input_data,
     )
-    return shared_processing.build_data_process(
-        process_type=ProcessName.DF_F_ESTIMATION,
-        plane_id=plane_id,
-        code=code,
-        start_time=start_time.astimezone(_SEATTLE_TZ),
-        end_time=end_time.astimezone(_SEATTLE_TZ),
-        output_path=output_path,
-        output_parameters=output_parameters,
-        notes=notes,
-        resources=shared_processing.resource_usage(),
-    )
 
 
-def build_processing(data_processes: List[DataProcess]) -> Processing:
-    """Wrap data processes into a full v2 Processing object."""
-    return shared_processing.build_processing(data_processes)
+def process_name(plane_id: str) -> str:
+    """Return the ``DataProcess.name`` this capsule emits for a plane.
 
-
-def write_processing_json(processing: Processing, output_dir: Path) -> Path:
-    """Serialize a Processing object to ``processing.json``.
+    Mirrors the composition
+    :func:`aind_pophys_metadata.processing.build_data_process` performs, so
+    the name can be excluded from its own upstream dependency list.
 
     Parameters
     ----------
-    processing : Processing
-        The processing document to write.
-    output_dir : Path
-        Directory into which ``processing.json`` is written.
+    plane_id : str
+        Plane/FOV identifier.
 
     Returns
     -------
-    Path
-        The path written.
+    str
+        The composed process name.
     """
-    return shared_processing.write_processing_json(processing, output_dir)
+    return f"{plane_id}: {PROCESS_TYPE.value}"

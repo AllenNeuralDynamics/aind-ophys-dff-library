@@ -1,13 +1,13 @@
-"""Tests for the dF/F metadata read layer and Processing builders."""
+"""Tests for the dF/F metadata read layer and the Code builder."""
 
 import json
 import unittest
-from datetime import datetime, timezone
+from importlib.metadata import version
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
 
 from aind_data_schema.core.processing import Processing
+from aind_pophys_metadata.runner import stage_guard
 
 from aind_ophys_dff_library.utils import metadata_utils as mu
 
@@ -32,6 +32,12 @@ V2_ACQUISITION = {
     ],
 }
 
+V2_NO_SUBJECT = {
+    key: value
+    for key, value in V2_ACQUISITION.items()
+    if key != "subject_id"
+}
+
 PLATFORM = {"imaging_plane_groups": [{"acquisition_framerate_Hz": 11.0}]}
 DATA_DESCRIPTION = {"name": "multiplane-ophys_999999_2026-07-29_00-00-00"}
 
@@ -48,7 +54,7 @@ class TestLoadDFFMetadata(unittest.TestCase):
     """v1/v2 dispatch for the fields dF/F consumes."""
 
     def test_reads_v1_session(self):
-        """A v1 session.json supplies frame rate and subject."""
+        """A v1 session.json supplies frame rate, subject and plane ids."""
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             _write(root, "session.json", V1_SESSION)
@@ -57,6 +63,7 @@ class TestLoadDFFMetadata(unittest.TestCase):
         self.assertEqual(metadata.frame_rate, 9.48)
         self.assertEqual(metadata.subject_id, "999999")
         self.assertEqual(metadata.dataset_name, DATA_DESCRIPTION["name"])
+        self.assertEqual(metadata.fov_ids, ("plane_0",))
 
     def test_reads_v2_acquisition(self):
         """A v2 acquisition.json supplies the same fields."""
@@ -76,11 +83,28 @@ class TestLoadDFFMetadata(unittest.TestCase):
             metadata = mu.load_dff_metadata(root)
         self.assertEqual(metadata.frame_rate, 11.0)
 
+    def test_cli_frame_rate_fallback(self):
+        """The CLI override supplies the rate when the metadata cannot."""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write(root, "session.json", {"subject_id": "1"})
+            metadata = mu.load_dff_metadata(root, cli_frame_rate=7.5)
+        self.assertEqual(metadata.frame_rate, 7.5)
+
+    def test_missing_frame_rate_raises_in_the_loader(self):
+        """An unresolvable frame rate fails at load, naming the core file."""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write(root, "session.json", {"subject_id": "1"})
+            with self.assertRaises(ValueError) as caught:
+                mu.load_dff_metadata(root)
+        self.assertIn("session.json", str(caught.exception))
+
     def test_subject_json_fallback(self):
         """subject_id falls back to subject.json when the core file omits it."""
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            _write(root, "acquisition.json", {"instrument_id": "MESO.1"})
+            _write(root, "acquisition.json", V2_NO_SUBJECT)
             _write(root, "subject.json", {"subject_id": "NY129"})
             metadata = mu.load_dff_metadata(root)
         self.assertEqual(metadata.subject_id, "NY129")
@@ -107,77 +131,55 @@ class TestLoadDFFMetadata(unittest.TestCase):
             metadata.frame_rate = 1.0
 
 
-class TestProcessingBuilders(unittest.TestCase):
-    """The v2 DataProcess / Processing builders."""
+class TestCodeBuilder(unittest.TestCase):
+    """The v2 Code block identifying this capsule's runs."""
 
-    def setUp(self):
-        """Fix the timestamps used by every builder assertion."""
-        self.start = datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc)
-        self.end = datetime(2026, 7, 29, 12, 5, tzinfo=timezone.utc)
-
-    def test_build_data_process(self):
-        """A successful run yields a dF/F DataProcess, no notes."""
-        data_process = mu.build_data_process(
+    def test_version_and_url_identify_the_backing_library(self):
+        """code.version is never empty, and the url names the same artifact."""
+        code = mu.build_dff_code(
             parameters={"method": "triexp"},
-            start_time=self.start,
-            end_time=self.end,
             input_data=["VISp_0/extraction/VISp_0_extraction.h5"],
-            output_path="VISp_0/dff",
-            output_parameters={"num_rois": 12},
         )
-        self.assertEqual(data_process.process_type, "dF/F estimation")
-        self.assertEqual(str(data_process.output_path), "VISp_0/dff")
-        self.assertIsNone(data_process.notes)
-        self.assertEqual(data_process.experimenters, [])
+        self.assertEqual(code.version, version(mu.LIBRARY_NAME))
+        self.assertTrue(code.version)
         self.assertEqual(
-            data_process.code.input_data[0].name,
+            code.url,
+            f"https://github.com/AllenNeuralDynamics/{mu.LIBRARY_NAME}",
+        )
+        self.assertNotIn("/tree/main/code", code.url)
+        self.assertEqual(
+            code.input_data[0].name,
             "VISp_0/extraction/VISp_0_extraction.h5",
         )
-        self.assertIsNotNone(data_process.resources)
 
-    def test_build_data_process_records_error(self):
-        """A failed run records the exception in notes."""
-        data_process = mu.build_data_process(
-            parameters={},
-            start_time=self.start,
-            end_time=self.end,
-            error=ValueError("no frame rate"),
-        )
-        self.assertIn("ValueError", data_process.notes)
-        self.assertIn("no frame rate", data_process.notes)
-
-    @patch.dict(
-        "os.environ",
-        {
-            "PIPELINE_NAME": "aind-pophys-pipeline",
-            "PIPELINE_URL": "https://example.invalid/p",
-            "PIPELINE_VERSION": "2.0.0",
-        },
-        clear=False,
-    )
-    def test_build_processing_populates_pipeline_from_env(self):
-        """pipelines and pipeline_name come from the same env read."""
-        data_process = mu.build_data_process(
-            parameters={}, start_time=self.start, end_time=self.end
-        )
-        processing = mu.build_processing([data_process])
-        self.assertEqual(len(processing.pipelines), 1)
-        self.assertEqual(
-            processing.data_processes[0].pipeline_name,
-            processing.pipelines[0].name,
-        )
-
-    def test_write_processing_json_round_trips(self):
-        """The written document validates back as a full v2 Processing."""
-        data_process = mu.build_data_process(
-            parameters={}, start_time=self.start, end_time=self.end
-        )
+    def test_mid_run_parameters_merge_into_the_written_code(self):
+        """Data-derived values join the up-front ones, and still write."""
+        code = mu.build_dff_code(parameters={"method": "triexp"})
         with TemporaryDirectory() as tmp:
-            written = mu.write_processing_json(
-                mu.build_processing([data_process]), Path(tmp) / "nested"
+            output_dir = Path(tmp)
+            with stage_guard(output_dir, mu.PROCESS_TYPE, code) as ctx:
+                ctx.parameters = {"resolved_frame_rate": 9.48}
+            written = json.loads((output_dir / "processing.json").read_text())
+        self.assertEqual(
+            written["data_processes"][0]["code"]["parameters"],
+            {"method": "triexp", "resolved_frame_rate": 9.48},
+        )
+
+    def test_process_name_matches_the_emitted_document(self):
+        """The excluded self-name equals the name the guard writes."""
+        with TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            code = mu.build_dff_code(parameters={})
+            with stage_guard(
+                output_dir, mu.PROCESS_TYPE, code, plane_id="VISp_0"
+            ):
+                pass
+            written = Processing.model_validate_json(
+                (output_dir / "processing.json").read_text()
             )
-            self.assertTrue(written.exists())
-            Processing.model_validate_json(written.read_text())
+        self.assertEqual(
+            written.data_processes[0].name, mu.process_name("VISp_0")
+        )
 
 
 if __name__ == "__main__":
