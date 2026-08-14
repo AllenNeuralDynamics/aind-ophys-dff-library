@@ -6,7 +6,7 @@ import unittest
 class ExampleTest(unittest.TestCase):
     """Example Test Class"""
 
-    def test_assert_example(self):
+    def test_assert_example(self) -> None:
         """Example of how to test the truth of a statement."""
 
         self.assertTrue(1 == 1)

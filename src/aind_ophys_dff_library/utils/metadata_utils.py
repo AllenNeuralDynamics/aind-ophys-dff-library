@@ -13,14 +13,17 @@ from typing import List, Optional, Tuple
 
 from aind_data_schema.components.identifiers import Code
 from aind_data_schema_models.process_names import ProcessName
-from aind_pophys_metadata import fields, io
+from aind_pophys_metadata import CoreMetadata
 from aind_pophys_metadata import processing as shared_processing
 
 CODE_NAME = "aind-ophys-dff"
-# The shared builder derives both ``code.url`` and ``code.version`` from this
-# distribution name, so the two always describe one artifact: the released
-# backing library, whose version bumps automatically on merge.
+# The shared builder derives ``code.version`` from this distribution name, so
+# the version is the released backing library's, which bumps automatically on
+# merge.
 LIBRARY_NAME = "aind-ophys-dff-library"
+# Only this repo knows where its own code lives, so the url is supplied here
+# rather than derived by the shared builder.
+CODE_URL = "https://github.com/AllenNeuralDynamics/aind-ophys-dff-library"
 
 PROCESS_TYPE = ProcessName.DF_F_ESTIMATION
 
@@ -42,8 +45,8 @@ class DFFMetadata:
     dataset_name : str or None
         Derived asset name, used for logging only.
     fov_ids : tuple of str
-        Canonical plane/FOV ids from the acquisition metadata, used to
-        cross-check the plane id scavenged from the input directory layout.
+        Canonical plane/FOV ids from the acquisition metadata, used for
+        logging and reporting.
     """
 
     frame_rate: float
@@ -77,26 +80,19 @@ def load_dff_metadata(
     Raises
     ------
     FileNotFoundError
-        If neither ``acquisition.json`` nor ``session.json`` is found.
+        If no core metadata file is found.
     ValueError
-        If both core files are present (ambiguous input), or if no source
+        If both v1 and v2 core files are present (ambiguous input), or if no source
         supplies a frame rate.
     """
-    input_dir = Path(input_dir)
-    common = io.load_common(input_dir)
+    core = CoreMetadata.load(Path(input_dir))
     return DFFMetadata(
-        frame_rate=fields.resolve_frame_rate(
-            common.version,
-            common.core_raw,
-            common.platform_raw,
-            core_file=common.core_path,
-            input_dir=input_dir,
-            cli_override=cli_frame_rate,
-            required=True,
+        frame_rate=core.get_frame_rate(
+            cli_override=cli_frame_rate, required=True
         ),
-        subject_id=fields.get_subject_id(common.core_raw, common.subject_raw),
-        dataset_name=fields.get_dataset_name(common.data_description_raw),
-        fov_ids=fields.get_fov_ids(common.version, common.core_raw),
+        subject_id=core.get_subject_id(),
+        dataset_name=core.get_dataset_name(),
+        fov_ids=core.get_fov_ids(),
     )
 
 
@@ -123,6 +119,7 @@ def build_dff_code(
     return shared_processing.build_code(
         CODE_NAME,
         library_name=LIBRARY_NAME,
+        url=CODE_URL,
         parameters=parameters,
         input_data=input_data,
     )

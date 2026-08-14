@@ -5,12 +5,12 @@ Owns both halves of this capsule's QC: the per-ROI diagnostic figures and the
 metrics built here and emits ONE full ``quality_control.json`` (never
 per-metric files).
 
-⚠️ ``CurationMetric`` moved in v2: it is now a first-class member of
-``QualityControl.metrics`` in ``aind_data_schema.core.quality_control`` (a
-``QCMetric`` subclass adding ``value``/``type``/``curation_history``). The v1
-``aind_qcportal_schema.metric_value.CurationMetric`` this capsule used no
-longer exists, and v2 also removed ``QCEvaluation``, so the old
-"metric wrapped in an evaluation" shape is gone.
+``CurationMetric`` here is the core v2 class from
+``aind_data_schema.core.quality_control`` (a ``QCMetric`` subclass adding
+``value``/``type``/``curation_history``), and it goes straight into
+``QualityControl.metrics``. Do not reach for
+``aind_qcportal_schema.metric_value.CurationMetric`` — it no longer exists,
+and without ``QCEvaluation`` there is no wrapper to put a metric in.
 """
 
 import logging
@@ -32,6 +32,7 @@ from numpy.typing import NDArray
 
 mpl.use("Agg")
 from matplotlib import pyplot as plt  # noqa: E402
+from matplotlib.axes import Axes  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -127,8 +128,8 @@ def _zoom_windows(t: NDArray, zoom_duration: float) -> list:
 
 
 def _draw_inset(
-    host_ax,
-    dff_ax,
+    host_ax: Axes,
+    dff_ax: Axes,
     t: NDArray,
     dff_trace: NDArray,
     window: tuple,

@@ -28,10 +28,11 @@ Three-pass fitting (at ROI level, not per-combo):
   Pass 2 — all combos, sigma relaxation to escape zero-gradient traps.
             → winner selection; done if any valid winner exists
               (accept even if low_f0 — Pass 3 cannot help).
-  Pass 3 — all combos, per-combo b_bright upper-bound constraint
+  Pass 3 — all combos, per-combo b_bright lower-bound constraint
             derived from Pass 2 params; dual x0 (recipe default and
             Pass 2 params with b_bright clipped).
-            → accept best available winner.
+            → accept best available winner, or fall back to the
+              percentile baseline if no combo is eligible.
 
 Winner selection:
   Apply three eligibility filters per combo (analytic F0 min ≥ 1,
@@ -52,7 +53,7 @@ aind_ophys_utils.signal_utils.noise_std (via dff_config.py).
 """
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import numpy as np
 from joblib import Parallel, delayed
@@ -99,7 +100,6 @@ def _boundary_fit_error(
     binf_frac: float = 0.5,
 ) -> bool:
     """Return True if the fit has a Pattern A boundary artifact at the beginning.
-    (Previous Pattern B for error near the end is removed due to lack of occurrence.)
 
     Pattern A — F0 dips far below b_inf at the beginning:
         1. Extend beginning window forward to the first frame where ``F < F0``
@@ -121,8 +121,8 @@ def _boundary_fit_error(
         Initial begin-window length in seconds before adaptive extension.
     nc_threshold : float
         Fraction of the extended begin window that must be non-crossing
-        (``F >= F0``) to trip Pattern A. Default 0.98 allows up to 2% noise
-        crossings vs. the strict-``all`` predicate of the prior code.
+        (``F >= F0``) to trip Pattern A. Default 0.98 tolerates up to 2%
+        noise crossings.
     binf_frac : float
         F0 minimum must fall below ``binf_frac × b_inf`` for Pattern A.
     """
@@ -149,7 +149,7 @@ def _boundary_fit_error(
 # Per-pass helpers (module-level for joblib pickling)
 # ---------------------------------------------------------------------------
 
-def _compute_sigma_relax(M, sigma: float) -> float:
+def _compute_sigma_relax(M: AsymmetricTukeyBiweight, sigma: float) -> float:
     """Relaxed sigma for Pass 2: sigma * 2.0 / z_half.
 
     z_half is the z in (0, 2) where min(M.weights(z), M.weights(-z)) = 0.5.
@@ -215,8 +215,8 @@ def _select_winner(
     every combo (including ineligible ones):
 
     - ``med_neg``         : float | None — median absolute negative residual.
-                            ``None`` only if Filter 1 (≥10 negative residuals
-                            with finite median) rejected the combo.
+                            ``None`` only if Filter 1 (more than 10 negative
+                            residuals with finite median) rejected the combo.
     - ``score``           : float | None — ``abs(med_neg - target)``. ``None``
                             iff ``med_neg`` is ``None``. Defined for combos
                             rejected by Filter 2 / Filter 3 so callers can
@@ -225,7 +225,7 @@ def _select_winner(
     - ``filter_failure``  : str | None — eligibility tag. ``None`` means the
                             combo passed all filters and is winner-eligible.
                             Possible failure tags:
-                              * ``"few_neg_residuals"`` — fewer than 10
+                              * ``"few_neg_residuals"`` — 10 or fewer
                                 negative residuals (Filter 1).
                               * ``"med_neg_not_finite"`` — Filter 1 passed
                                 count check but ``med_neg`` was non-finite.
@@ -241,7 +241,7 @@ def _select_winner(
         params = params_store[combo]
         F0_analytic = F0_analytics[combo]
 
-        # Filter 1 (doc §7): finite med_neg (need > 10 negative residuals)
+        # Filter 1: finite med_neg over more than 10 negative residuals
         resid = F_row - F0_analytic.astype(np.float64)
         neg = resid[resid < 0]
         if len(neg) <= 10:
@@ -249,23 +249,23 @@ def _select_winner(
                             "filter_failure": "few_neg_residuals"}
             continue
         med_neg = float(np.median(np.abs(neg)))
-        # This condition may not ever be met, since NaN med_neg is when there is
-        # no negative values (already handled by the len(neg) <= 10 check above).
-        # TODO: check if this filter is necessary.
+        # Likely unreachable: a non-finite median needs no negative
+        # residuals, which the count check above already rejects.
+        # TODO: check whether this filter is necessary.
         if not np.isfinite(med_neg):
             stats[combo] = {"med_neg": None, "score": None,
                             "filter_failure": "med_neg_not_finite"}
             continue
         score = abs(med_neg - target)
 
-        # Filter 2 (doc §7): analytic (unclamped) F0 min >= 1.0
+        # Filter 2: analytic (unclamped) F0 min >= 1.0
         f0_analytic = sum_of_exps(params, t_rel)
         if float(f0_analytic.min()) < 1.0:
             stats[combo] = {"med_neg": med_neg, "score": score,
                             "filter_failure": "f0_lt_1"}
             continue
 
-        # Filter 3 (doc §7): boundary fit error (reuse already-computed f0_analytic)
+        # Filter 3: boundary fit error (reuses the f0_analytic computed above)
         if _boundary_fit_error(params, F_row, t_rel, dt, f0=f0_analytic):
             stats[combo] = {"med_neg": med_neg, "score": score,
                             "filter_failure": "boundary_fit_error"}
@@ -360,8 +360,8 @@ def _process_roi(  # noqa: C901
     - ``params``         : (7,) float64 — fitted parameter vector
                            ``[b_inf, b_slow, t_slow, b_fast, t_fast, b_bright, t_bright]``.
     - ``med_neg``        : float | None — median absolute negative residual.
-                           ``None`` only if Filter 1 rejected the combo (fewer
-                           than 10 negative residuals, or non-finite median).
+                           ``None`` only if Filter 1 rejected the combo (10 or
+                           fewer negative residuals, or non-finite median).
     - ``score``          : float | None — ``abs(med_neg - target)``; the value
                            the winner selection minimizes. ``None`` iff
                            ``med_neg`` is ``None``. Populated for combos
@@ -574,11 +574,11 @@ def log_to_jsonable(log: dict) -> dict:
     a per-row identity should wrap the return value (e.g.
     ``{"roi": i, **log_to_jsonable(log)}``).
     """
-    def _key(k):
+    def _key(k: Any) -> Any:
         """Flatten 2-tuple keys to underscore-joined strings."""
         return f"{k[0]}_{k[1]}" if isinstance(k, tuple) else k
 
-    def _val(v):
+    def _val(v: Any) -> Any:
         """Recursively normalize a log value into a JSON-serializable shape."""
         if isinstance(v, np.ndarray):
             return v.tolist()

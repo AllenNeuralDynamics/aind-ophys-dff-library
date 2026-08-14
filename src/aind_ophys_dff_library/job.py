@@ -6,10 +6,11 @@ compute dF/F (triexponential or rolling-percentile baseline) -> write the
 traces HDF5, the per-ROI fit logs and the per-ROI QC figures -> emit a full
 ``processing.json`` and ``quality_control.json``.
 
-The dF/F algorithms themselves stay where they already live: the
-triexponential fit in :mod:`aind_ophys_dff_library.triexp_dff` /
+This module holds only orchestration, IO and QC. The algorithms live
+elsewhere: the triexponential fit in
+:mod:`aind_ophys_dff_library.triexp_dff` /
 :mod:`aind_ophys_dff_library.dff_config`, and the rolling-percentile baseline
-in ``aind_ophys_utils.dff``. Only orchestration, IO and QC moved here.
+in ``aind_ophys_utils.dff``.
 
 ``processing.json`` is written by the shared ``stage_guard``, which stamps the
 timings and emits the document even when the stage raises, with the error
@@ -27,11 +28,7 @@ from typing import List, Optional, Tuple
 import h5py
 import numpy as np
 from aind_ophys_utils import dff as dff_percentile
-from aind_pophys_metadata.fields import (
-    SCAVENGE_MODE_SINGLE,
-    validate_scavenged_ids,
-)
-from aind_pophys_metadata.paths import find_one, relative_to_root
+from aind_pophys_metadata import find_one, relative_to_root
 from aind_pophys_metadata.processing import collect_upstream_process_names
 from aind_pophys_metadata.runner import StageContext, stage_guard
 from log_schema.main import setup_logging
@@ -482,15 +479,6 @@ def run(settings: Optional[DFFSettings] = None) -> None:
     )
 
     extraction_h5, unique_id = _locate_extraction(input_dir)
-    # The plane id is scavenged from the upstream directory layout, which
-    # guarantees uniqueness but not agreement with the acquisition metadata.
-    # One task sees one plane, so membership is the applicable comparison.
-    validate_scavenged_ids(
-        (unique_id,),
-        metadata.fov_ids,
-        logger,
-        mode=SCAVENGE_MODE_SINGLE,
-    )
     logger.info("Calculating dF/F for ExperimentID %s", unique_id)
 
     output_dir = _make_output_dir(results_root, unique_id)

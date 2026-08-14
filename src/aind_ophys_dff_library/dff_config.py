@@ -110,13 +110,7 @@ def set_dff_config(
     The bounds returned in ``bounds_all`` encode the sign convention:
     ``b_inf``, ``b_slow``, ``b_fast`` are constrained non-negative;
     ``b_bright`` is constrained non-positive (the suppression term, stored
-    as a negative amplitude). Equivalence with the older "biexp+bright"
-    form
-
-        F0 = b_inf + b_slow*exp(-t/t_slow) + b_fast*exp(-t/t_fast)
-                  − |b_bright_old| * exp(-t/t_bright)
-
-    is recovered by ``b_bright_new = −b_bright_old``.
+    as a negative amplitude).
 
     Parameters
     ----------
@@ -202,6 +196,8 @@ def set_dff_config(
             sigma_all          : (N,)      — per-ROI noise std (MAD)
             min_frac_below_f0  : float     — passed through to dff()
             tukey_param_combos : tuple     — passed through to dff()
+            fallback_long_window : float   — passed through to dff()
+            sigma_anneal_steps : int       — passed through to dff()
     """
     if not (0 <= min_frac_below_f0 < 1):
         raise ValueError(
@@ -274,7 +270,7 @@ def set_dff_config(
     t_bright_lb = max(t_bright_min_s, t_bright_min_tmax_factor * t_max)
     t_high = max(t_high_factor * t_max, t_slow_lb, t_bright_lb)
 
-    # Initial values: all bleach/bright amplitudes start at 0 (binit0)
+    # Initial values: all bleach/bright amplitudes start at 0
     n_tail = min(b_inf_n_frames, T_fit)
     b_inf_init = F_fit[:, -n_tail:].mean(axis=1)
     t_init = 0.5 * t_max
@@ -294,7 +290,7 @@ def set_dff_config(
             (float(b_inf_lbs[i]), None),         # 0: b_inf  >= b_inf_lb_factor * P1(F)
             (0.0, float(b_slow_ubs[i])),            # 1: b_slow ∈ [0, b_slow_max_factor * rptp]
             (t_slow_lb, t_high),                 # 2: t_slow
-            (0.0, float(b_fast_ubs[i])),           # 3: b_fast ∈ [0, rptp of first 300 s]
+            (0.0, float(b_fast_ubs[i])),           # 3: b_fast ∈ [0, rptp of b_fast_ptp_window_s]
             (t_fast_min_s, t_fast_max_s),        # 4: t_fast
             (-float(b_bright_ubs[i]), 0.0),        # 5: b_bright ∈ [-b_bright_max_factor*rptp, 0]
             (t_bright_lb, t_high),               # 6: t_bright
