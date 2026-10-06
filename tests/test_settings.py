@@ -24,7 +24,7 @@ class TestDFFSettings(unittest.TestCase):
     """Field defaults, validators and the app-panel contract."""
 
     def test_defaults(self) -> None:
-        """Field defaults are the values the capsule ships with."""
+        """Field defaults are the shipped values."""
         settings = _make_settings()
         self.assertEqual(settings.input_dir, Path("/data"))
         self.assertEqual(settings.output_dir, Path("/results"))
@@ -37,7 +37,6 @@ class TestDFFSettings(unittest.TestCase):
         self.assertEqual(settings.triexp_config_overrides, "{}")
         self.assertEqual(settings.zoom_duration, 60.0)
         self.assertIsNone(settings.frame_rate)
-        self.assertFalse(settings.verify)
 
     def test_method_is_constrained(self) -> None:
         """Only the two implemented baselines are accepted."""
@@ -99,7 +98,6 @@ class TestDFFSettings(unittest.TestCase):
             "sigma_anneal_steps": "1",
             "triexp_config_overrides": "{}",
             "zoom_duration": "60.0",
-            "verify": "1",
         }
         self.assertEqual(sorted(samples), sorted(DFFSettings.model_fields))
         argv = ["dff.py"] + [
@@ -107,7 +105,6 @@ class TestDFFSettings(unittest.TestCase):
         ]
         with patch.object(sys, "argv", argv):
             settings = DFFSettings()
-        self.assertTrue(settings.verify)
         self.assertEqual(settings.frame_rate, 9.48)
 
 

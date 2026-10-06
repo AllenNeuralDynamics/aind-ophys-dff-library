@@ -198,6 +198,13 @@ def set_dff_config(
             tukey_param_combos : tuple     — passed through to dff()
             fallback_long_window : float   — passed through to dff()
             sigma_anneal_steps : int       — passed through to dff()
+
+    Raises
+    ------
+    ValueError
+        If ``min_frac_below_f0`` is outside ``[0, 1)``, if ``ts`` is given but
+        its length does not match ``F``'s time axis, or if no frames remain
+        after skipping ``skip_initial_s``.
     """
     if not (0 <= min_frac_below_f0 < 1):
         raise ValueError(

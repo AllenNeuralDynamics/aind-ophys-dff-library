@@ -102,15 +102,6 @@ class DFFSettings(BaseSettings, cli_parse_args=True):
         ),
     )
 
-    verify: bool = Field(
-        default=False,
-        description=(
-            "Round-trip the emitted processing.json / quality_control.json "
-            "through the core v2 schema objects after writing, so bad output "
-            "fails in-capsule rather than downstream."
-        ),
-    )
-
     model_config = SettingsConfigDict(
         env_file=".env",
         env_prefix="DFF_",
@@ -126,6 +117,12 @@ class DFFSettings(BaseSettings, cli_parse_args=True):
         Only the shape is checked here; the allowed key set is enforced in
         :func:`aind_ophys_dff_library.job.parse_triexp_overrides`, which can
         see ``set_dff_config``'s signature.
+
+        Raises
+        ------
+        ValueError
+            If ``value`` is not valid JSON, or parses to something other than
+            a JSON object.
         """
         if not value:
             return "{}"

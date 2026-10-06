@@ -74,7 +74,7 @@ class TestMedian(unittest.TestCase):
 
 
 class TestTracesHdf5(unittest.TestCase):
-    """The traces HDF5 the event-detection capsule reads back."""
+    """The traces HDF5 the downstream event-detection stage reads back."""
 
     def test_round_trips_every_dataset_at_shape(self) -> None:
         """dF/F, baseline, noise and skewness keep their compute shapes."""

@@ -1,10 +1,10 @@
 """aind-data-schema v1/v2 metadata reads for dF/F estimation.
 
-A thin, capsule-specific layer over the shared ``aind_pophys_metadata``
+A thin, dF/F-specific layer over the shared ``aind_pophys_metadata``
 library. The v1/v2 dict paths, schema-version dispatch, the frame-rate
 resolution ladder and the ``Code``/``Processing`` builders all live in the
 shared library; this module only assembles the ``DFFMetadata`` view and this
-capsule's ``Code`` block.
+processing step's ``Code`` block.
 """
 
 from dataclasses import dataclass
@@ -30,7 +30,7 @@ PROCESS_TYPE = ProcessName.DF_F_ESTIMATION
 
 @dataclass(frozen=True)
 class DFFMetadata:
-    """Minimal metadata the dF/F capsule consumes.
+    """Minimal metadata dF/F estimation consumes.
 
     Attributes
     ----------
@@ -75,7 +75,7 @@ def load_dff_metadata(
     Returns
     -------
     DFFMetadata
-        The minimal fields this capsule consumes.
+        The minimal fields dF/F estimation consumes.
 
     Raises
     ------
@@ -126,7 +126,7 @@ def build_dff_code(
 
 
 def process_name(plane_id: str) -> str:
-    """Return the ``DataProcess.name`` this capsule emits for a plane.
+    """Return the ``DataProcess.name`` dF/F estimation emits for a plane.
 
     Mirrors the composition
     :func:`aind_pophys_metadata.processing.build_data_process` performs, so

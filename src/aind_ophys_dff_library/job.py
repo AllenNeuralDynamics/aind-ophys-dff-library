@@ -1,6 +1,6 @@
 """Top-level dF/F orchestration.
 
-``run()`` is the library entry point called by the thin capsule wrapper: read
+``run()`` is the library entry point called by the thin runtime wrapper: read
 metadata (v1 or v2) -> configure logging -> locate the extraction output ->
 compute dF/F (triexponential or rolling-percentile baseline) -> write the
 traces HDF5, the per-ROI fit logs and the per-ROI QC figures -> emit a full
@@ -104,7 +104,7 @@ def compute_dff(
     traces : (N, T) ndarray
         Neuropil-corrected fluorescence traces.
     settings : DFFSettings
-        Parsed capsule settings; ``settings.method`` selects the algorithm.
+        Parsed settings; ``settings.method`` selects the algorithm.
     frame_rate : float
         Sampling frequency (Hz).
     ts : (T,) ndarray or None
@@ -152,7 +152,7 @@ def _locate_extraction(input_dir: Path) -> Tuple[Path, str]:
     Parameters
     ----------
     input_dir : Path
-        The capsule input directory.
+        The input directory.
 
     Returns
     -------
@@ -178,7 +178,7 @@ def _make_output_dir(results_root: Path, unique_id: str) -> Path:
     Parameters
     ----------
     results_root : Path
-        The capsule results root.
+        The results root.
     unique_id : str
         Plane/FOV identifier.
 
@@ -433,35 +433,13 @@ def _run_dff(
     )
 
 
-def _verify_outputs(output_dir: Path) -> None:
-    """Round-trip the emitted metadata through the core v2 schema objects.
-
-    Parameters
-    ----------
-    output_dir : Path
-        Directory holding the emitted ``processing.json`` and
-        ``quality_control.json``.
-    """
-    from aind_data_schema.core.processing import Processing
-    from aind_data_schema.core.quality_control import QualityControl
-
-    Processing.model_validate_json(
-        (Path(output_dir) / "processing.json").read_text()
-    )
-    QualityControl.model_validate_json(
-        (Path(output_dir) / "quality_control.json").read_text()
-    )
-
-
 def run(settings: Optional[DFFSettings] = None) -> None:
     """Run dF/F estimation end to end.
 
     Parameters
     ----------
     settings : DFFSettings, optional
-        Parsed settings; constructed from CLI/env when omitted. When
-        ``settings.verify`` is True, the emitted metadata is round-tripped
-        through the core v2 schema objects after writing.
+        Parsed settings; constructed from CLI/env when omitted.
     """
     settings = settings or DFFSettings()
     input_dir = Path(settings.input_dir).resolve()
@@ -505,6 +483,3 @@ def run(settings: Optional[DFFSettings] = None) -> None:
             output_dir,
             ctx,
         )
-
-    if settings.verify:
-        _verify_outputs(output_dir)

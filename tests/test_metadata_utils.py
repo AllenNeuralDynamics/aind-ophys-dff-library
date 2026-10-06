@@ -132,7 +132,7 @@ class TestLoadDFFMetadata(unittest.TestCase):
 
 
 class TestCodeBuilder(unittest.TestCase):
-    """The v2 Code block identifying this capsule's runs."""
+    """The v2 Code block identifying dF/F runs."""
 
     def test_version_and_url_identify_the_backing_library(self) -> None:
         """code.version is never empty, and the url names the same artifact."""

@@ -49,7 +49,6 @@ panel is generated from this class. Key fields:
 | `triexp_config_overrides` | `{}` | JSON object of `set_dff_config` overrides (`triexp` only) |
 | `long_window`, `short_window`, `inactive_percentile`, `noise_method` | | `percentile` parameters |
 | `zoom_duration` | `60.0` | width [s] of each zoomed inset in the QC figure; `0` disables the insets |
-| `verify` | `False` | round-trip the emitted metadata through the v2 schema after writing |
 
 ## Modules
 
@@ -86,7 +85,7 @@ shared `aind-pophys-metadata` helpers.
 ### `utils/metadata_utils.py`
 
 The aind-data-schema v1/v2 read layer: `load_dff_metadata()` assembles the
-frozen `DFFMetadata` view, `build_dff_code()` builds this capsule's `Code`
+frozen `DFFMetadata` view, `build_dff_code()` builds the dF/F `Code`
 block, and `process_name()` reproduces the `DataProcess.name` the run emits.
 
 ### `utils/paths.py`
@@ -105,7 +104,7 @@ Everything is written under `<output_dir>/<plane_id>/dff/`:
 
 `processing.json` and `quality_control.json` are emitted through the shared
 [`aind-pophys-metadata`](https://github.com/AllenNeuralDynamics/aind-pophys-metadata)
-package, so their shape matches every other capsule in the pipeline.
+package, so their shape matches every other processing step in the pipeline.
 
 ## Level of Support
 Please indicate a level of support:

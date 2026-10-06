@@ -1,9 +1,9 @@
 """quality_control.json generation for dF/F estimation.
 
-Owns both halves of this capsule's QC: the per-ROI diagnostic figures and the
-``CurationMetric`` that points a reviewer at them. ``job.run`` accumulates the
-metrics built here and emits ONE full ``quality_control.json`` (never
-per-metric files).
+Owns both halves of this processing step's QC: the per-ROI diagnostic
+figures and the ``CurationMetric`` that points a reviewer at them. ``job.run``
+accumulates the metrics built here and emits ONE full ``quality_control.json``
+(never per-metric files).
 
 ``CurationMetric`` here is the core v2 class from
 ``aind_data_schema.core.quality_control`` (a ``QCMetric`` subclass adding
