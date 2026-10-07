@@ -16,22 +16,10 @@ classifiers = [
 readme = "README.md"
 version = "0.1.0"
 
-# The library is the single source of dependency truth: the capsule's Code
-# Ocean environment installs only this package, pinned to a commit, and pip
-# resolves the tree below transitively.
-#
-# aind-ophys-utils stays at 0.1.0. It supplies both dF/F baselines --
-# baseline_fitting.nonlinear_fit (triexp) and dff.dff (percentile) -- so
-# bumping it would move the numerical output. Verified that 0.1.0 exposes both
-# and that nonlinear_fit's signature is identical in 0.2.0; the sibling
-# capsules' >=0.2.0 pin lives in their own images, so there is no conflict.
 dependencies = [
     'aind-ophys-utils==0.1.0',
     'joblib==1.5.3',
     'jax==0.6.2',
-    # These two move together: aind-data-schema 2.9.0 requires
-    # aind-data-schema-models >=6.1.0,<7, so bumping either alone makes the
-    # environment unresolvable.
     "aind-data-schema==2.9.0",
     "aind-data-schema-models==6.2.0",
     "aind-pophys-metadata @ git+https://github.com/AllenNeuralDynamics/aind-pophys-metadata.git@v0.2.0",
@@ -65,8 +53,8 @@ exclude = '''
 
 (
   /(
-      \.eggs         # exclude a few common directories in the
-    | \.git          # root of the project
+      \.eggs
+    | \.git
     | \.hg
     | \.mypy_cache
     | \.tox
@@ -80,11 +68,6 @@ exclude = '''
 )
 '''
 
-# triexp_dff.py, dff_config.py and job.py are temporarily omitted from
-# coverage: they were inherited from production code that shipped without unit
-# tests, and are for now exercised by the Code Ocean data run. job.py's stage
-# body is unit-tested; its entrypoint is not. settings.py, qc.py and utils/ are
-# held at 100%.
 [tool.coverage.run]
 omit = [
     "*__init__*",
