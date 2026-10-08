@@ -7,7 +7,7 @@
 ![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
 ![Python](https://img.shields.io/badge/python->=3.10-blue?logo=python)
 
-dF/F estimation for AIND planar / population optical physiology. This is the
+dF/F estimation for AIND planar optical physiology. This is the
 backing library for the `aind-ophys-dff` Code Ocean capsule: the capsule is a
 thin wrapper that calls `job.run()`, and all logic, settings and tests live
 here.
@@ -56,8 +56,8 @@ panel is generated from this class. Key fields:
 
 Orchestration. `run()` reads the metadata, locates the upstream
 `*/extraction/*extraction.h5`, dispatches to the selected algorithm via
-`compute_dff()`, writes every output, and emits the metadata documents. Only
-orchestration, IO and QC live here.
+`compute_dff()`, writes every output, and emits the metadata documents.
+Orchestration and IO only; the QC figures and metric live in `qc.py`.
 
 ### `settings.py`
 
@@ -87,10 +87,6 @@ shared `aind-pophys-metadata` helpers.
 The aind-data-schema v1/v2 read layer: `load_dff_metadata()` assembles the
 frozen `DFFMetadata` view, `build_dff_code()` builds the dF/F `Code`
 block, and `process_name()` reproduces the `DataProcess.name` the run emits.
-
-### `utils/paths.py`
-
-Alias re-exporting `relative_to_root` from `aind_pophys_metadata.paths`.
 
 ## Outputs
 
