@@ -393,7 +393,7 @@ def _run_dff(
         output_dir, unique_id, dff_traces, baseline, noise, skewness
     )
     _write_fit_logs(output_dir, unique_id, logs)
-    _write_roi_plots(
+    plot_references = _write_roi_plots(
         settings,
         output_dir,
         unique_id,
@@ -403,7 +403,10 @@ def _run_dff(
         frame_rate,
         logs,
     )
-    qc.write_qc_evalutation(output_dir, unique_id, traces.shape[0])
+    metric = qc.build_dff_curation_metric(unique_id, plot_references)
+    qc.write_quality_control_json(
+        qc.build_quality_control([metric]), output_dir
+    )
 
 
 def run(settings: Optional[DFFSettings] = None) -> None:
