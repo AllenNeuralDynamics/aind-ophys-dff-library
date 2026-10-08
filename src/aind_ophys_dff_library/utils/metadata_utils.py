@@ -16,15 +16,6 @@ from aind_data_schema_models.process_names import ProcessName
 from aind_pophys_metadata import CoreMetadata
 from aind_pophys_metadata import processing as shared_processing
 
-CODE_NAME = "aind-ophys-dff"
-# The shared builder derives ``code.version`` from this distribution name, so
-# the version is the released backing library's, which bumps automatically on
-# merge.
-LIBRARY_NAME = "aind-ophys-dff-library"
-# Only this repo knows where its own code lives, so the url is supplied here
-# rather than derived by the shared builder.
-CODE_URL = "https://github.com/AllenNeuralDynamics/aind-ophys-dff-library"
-
 PROCESS_TYPE = ProcessName.DF_F_ESTIMATION
 
 
@@ -112,14 +103,11 @@ def build_dff_code(
     Returns
     -------
     Code
-        The populated code block. ``version`` is the installed backing
-        library's released version, so it is never an empty string in a run
-        where that library is installed - which is every real run.
+        The populated code block; name, version and url are this library's
+        installed package metadata.
     """
     return shared_processing.build_code(
-        CODE_NAME,
-        library_name=LIBRARY_NAME,
-        url=CODE_URL,
+        __name__,
         parameters=parameters,
         input_data=input_data,
     )

@@ -39,6 +39,7 @@ V2_NO_SUBJECT = {
 }
 
 PLATFORM = {"imaging_plane_groups": [{"acquisition_framerate_Hz": 11.0}]}
+LIBRARY = "aind-ophys-dff-library"
 DATA_DESCRIPTION = {"name": "multiplane-ophys_999999_2026-07-29_00-00-00"}
 
 
@@ -134,19 +135,18 @@ class TestLoadDFFMetadata(unittest.TestCase):
 class TestCodeBuilder(unittest.TestCase):
     """The v2 Code block identifying dF/F runs."""
 
-    def test_version_and_url_identify_the_backing_library(self) -> None:
-        """code.version is never empty, and the url names the same artifact."""
+    def test_identity_is_the_installed_library(self) -> None:
+        """name, version and url all describe this library's package."""
         code = mu.build_dff_code(
             parameters={"method": "triexp"},
             input_data=["VISp_0/extraction/VISp_0_extraction.h5"],
         )
-        self.assertEqual(code.version, version(mu.LIBRARY_NAME))
+        self.assertEqual(code.name, LIBRARY)
+        self.assertEqual(code.version, version(LIBRARY))
         self.assertTrue(code.version)
         self.assertEqual(
-            code.url,
-            f"https://github.com/AllenNeuralDynamics/{mu.LIBRARY_NAME}",
+            code.url, f"https://github.com/AllenNeuralDynamics/{LIBRARY}"
         )
-        self.assertNotIn("/tree/main/code", code.url)
         self.assertEqual(
             code.input_data[0].name,
             "VISp_0/extraction/VISp_0_extraction.h5",
