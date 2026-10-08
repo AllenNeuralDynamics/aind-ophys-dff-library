@@ -1,20 +1,10 @@
-"""Top-level dF/F orchestration.
+"""dF/F orchestration for one plane; :func:`run` is the library entry point.
 
-``run()`` is the library entry point called by the thin runtime wrapper: read
-metadata (v1 or v2) -> configure logging -> locate the extraction output ->
-compute dF/F (triexponential or rolling-percentile baseline) -> write the
-traces HDF5, the per-ROI fit logs and the per-ROI QC figures -> emit a full
-``processing.json`` and ``quality_control.json``.
-
-This module holds only orchestration, IO and QC. The algorithms live
-elsewhere: the triexponential fit in
-:mod:`aind_ophys_dff_library.triexp_dff` /
-:mod:`aind_ophys_dff_library.dff_config`, and the rolling-percentile baseline
-in ``aind_ophys_utils.dff``.
-
-``processing.json`` is written by the shared ``stage_guard``, which stamps the
-timings and emits the document even when the stage raises, with the error
-recorded in ``notes``.
+Reads the metadata and the upstream extraction traces, computes dF/F with
+either the triexponential baseline (:mod:`aind_ophys_dff_library.triexp_dff`)
+or the rolling-percentile baseline (``aind_ophys_utils.dff``), and writes the
+traces HDF5, per-ROI fit logs and QC figures, ``processing.json`` and
+``quality_control.json``.
 """
 
 import inspect
