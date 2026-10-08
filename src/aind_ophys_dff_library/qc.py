@@ -14,6 +14,7 @@ and without ``QCEvaluation`` there is no wrapper to put a metric in.
 """
 
 import logging
+from datetime import datetime as dt
 from pathlib import Path
 from typing import List, Optional, Union
 
@@ -22,8 +23,10 @@ import numpy as np
 from aind_data_schema.core.quality_control import (
     CurationMetric,
     QCMetric,
+    QCStatus,
     QualityControl,
     Stage,
+    Status,
 )
 from aind_data_schema_models.modalities import Modality
 from aind_pophys_metadata import quality_control as shared_qc
@@ -57,7 +60,7 @@ def build_dff_curation_metric(
     Returns
     -------
     CurationMetric
-        The dF/F curation metric, seeded PENDING for reviewer curation.
+        The dF/F curation metric, with an automated PASS status.
     """
     return CurationMetric(
         name=f"{unique_id} dF/F",
@@ -71,7 +74,13 @@ def build_dff_curation_metric(
             "F0 and the resulting dF/F, and curate out ROIs whose baseline "
             "fit is wrong."
         ),
-        status_history=[shared_qc.pending_qc_status()],
+        status_history=[
+            QCStatus(
+                evaluator="Automated",
+                status=Status.PASS,
+                timestamp=dt.now(shared_qc.SEATTLE_TZ).isoformat(),
+            )
+        ],
     )
 
 

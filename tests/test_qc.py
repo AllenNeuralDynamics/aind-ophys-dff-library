@@ -50,10 +50,12 @@ class TestDFFCurationMetric(unittest.TestCase):
         self.assertEqual(self.metric.tags["evaluation"], qc.EVALUATION)
         self.assertEqual(self.metric.tags["type"], "Operational QC")
 
-    def test_awaits_review(self) -> None:
-        """The metric lands in the reviewer queue rather than auto-passing."""
+    def test_automated_pass(self) -> None:
+        """The metric is seeded with one automated PASS status."""
         self.assertEqual(len(self.metric.status_history), 1)
-        self.assertEqual(self.metric.status_history[0].status, Status.PENDING)
+        status = self.metric.status_history[0]
+        self.assertEqual(status.status, Status.PASS)
+        self.assertEqual(status.evaluator, "Automated")
 
     def test_no_rois_is_an_empty_value_list(self) -> None:
         """A plane with no ROIs still emits a well-formed metric."""
