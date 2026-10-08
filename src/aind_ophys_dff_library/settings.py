@@ -43,7 +43,7 @@ class DFFSettings(BaseSettings, cli_parse_args=True):
         ),
     )
 
-    # Percentile parameters — read only when method == 'percentile'.
+    # Percentile parameters - read only when method == 'percentile'.
     long_window: float = Field(
         default=60.0,
         description=(
@@ -71,7 +71,7 @@ class DFFSettings(BaseSettings, cli_parse_args=True):
         ),
     )
 
-    # Triexp parameters — read only when method == 'triexp'.
+    # Triexp parameters - read only when method == 'triexp'.
     sigma_anneal_steps: int = Field(
         default=1,
         description=(

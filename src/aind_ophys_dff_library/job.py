@@ -41,14 +41,30 @@ PLOTS_DIR = "plots"
 
 
 def parse_triexp_overrides(raw: str) -> dict:
-    """Parse and validate the --triexp-config-overrides JSON string.
+    """Parse and validate the ``--triexp_config_overrides`` JSON string.
 
-    Returns a dict of validated overrides to splat into ``set_dff_config``.
-    Fails fast on invalid JSON, non-object root, or unknown keys.
+    JSON validity is already enforced by
+    :class:`aind_ophys_dff_library.settings.DFFSettings`; this adds the key
+    check, which needs ``set_dff_config``'s signature.
+
+    Parameters
+    ----------
+    raw : str
+        JSON object string of overrides.
+
+    Returns
+    -------
+    dict
+        Validated overrides, ready to splat into ``set_dff_config``.
+
+    Raises
+    ------
+    ValueError
+        If a key is not a ``set_dff_config`` keyword argument.
     """
     parsed = json.loads(raw or "{}")
-    # Exclude positional args + fields exposed as dedicated DFFSettings knobs
-    # (dedicated fields are authoritative; JSON blob must not shadow them).
+    # Exclude positional args and fields with dedicated DFFSettings knobs:
+    # the dedicated field is authoritative, the JSON blob must not shadow it.
     allowed = set(inspect.signature(set_dff_config).parameters) - {
         "F",
         "fs",
@@ -66,7 +82,7 @@ def parse_triexp_overrides(raw: str) -> dict:
 
 def compute_dff(
     traces: np.ndarray,
-    settings: "DFFSettings",
+    settings: DFFSettings,
     frame_rate: float,
     ts: Optional[np.ndarray],
     n_jobs: int,
@@ -78,7 +94,7 @@ def compute_dff(
     traces : (N, T) ndarray
         Neuropil-corrected fluorescence traces.
     settings : DFFSettings
-        Parsed capsule settings; ``settings.method`` selects the algorithm.
+        Parsed settings; ``settings.method`` selects the algorithm.
     frame_rate : float
         Sampling frequency (Hz).
     ts : (T,) ndarray or None
@@ -89,11 +105,9 @@ def compute_dff(
 
     Returns
     -------
-    dff_traces : (N, T) ndarray
-    baseline : (N, T) ndarray
-    noise : (N,) ndarray or scalar
-    logs : list[dict] (triexp) or None (percentile)
-    config_snapshot : dict (triexp) or None (percentile)
+    tuple
+        ``(dff_traces, baseline, noise, logs, config_snapshot)``. ``logs`` and
+        ``config_snapshot`` are ``None`` on the percentile path.
     """
     if settings.method == "triexp":
         overrides = parse_triexp_overrides(settings.triexp_config_overrides)

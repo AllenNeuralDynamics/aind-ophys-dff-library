@@ -220,57 +220,45 @@ def plot_dff(
     baseline: NDArray,
     dff_trace: NDArray,
     frame_rate: float,
-    roi_id: int,
+    roi_id: Union[int, str],
     fig_path: Union[str, Path],
     unique_id: str,
     log: Optional[dict] = None,
     zoom_duration: float = 60.0,
 ) -> None:
-    """Plot raw and dF/F traces with optional zoomed insets.
+    """Plot one ROI's raw and dF/F traces, with optional zoomed insets.
 
-    Creates a multi-panel plot showing raw fluorescence signal and baseline-corrected
-    dF/F trace. When zoom_duration is specified, includes three zoomed inset plots
-    showing detailed views of the beginning, middle, and end of the recording session.
+    Two panels (neuropil-corrected trace plus fitted F0, and the resulting
+    dF/F); when ``zoom_duration`` is positive a middle row of three insets
+    shows the beginning, middle and end of the recording in detail.
 
     Parameters
     ----------
     trace : NDArray
-        Neuropil-corrected raw fluorescence trace
+        Neuropil-corrected raw fluorescence trace.
     baseline : NDArray
-        Fitted baseline (F0) values
+        Fitted baseline (F0) values.
     dff_trace : NDArray
-        Baseline-corrected dF/F trace (fractional units)
+        Baseline-corrected dF/F trace (fractional units).
     frame_rate : float
-        Frame rate in Hz
-    roi_id : int
-        Region of interest identifier for labeling the plot
+        Frame rate [Hz], used for the time axis.
+    roi_id : int or str
+        ROI identifier used in the title and filename (zero-padded by the
+        caller so filenames sort).
     fig_path : str or Path
-        Directory path where the output PNG file will be saved
-    unique_id: str
-        unique identifier
+        Directory the PNG is written to.
+    unique_id : str
+        Plane/FOV identifier used in the filename.
+    log : dict, optional
+        Per-ROI triexp fit log; its pass/winner/trigger fields are added to
+        the title when present.
     zoom_duration : float, optional
-        Duration in seconds for each zoomed inset window. If None or 0,
-        creates a simpler 2-row layout without insets. If positive, creates
-        a 3-row layout with inset zoom plots. Default is 60.0.
+        Width [s] of each inset; ``0`` or ``None`` disables the inset row.
 
     Returns
     -------
     None
-        Saves the plot as a PNG file to the specified path and closes the figure.
-
-    Notes
-    -----
-    The function creates different layouts based on zoom_duration:
-
-    - If zoom_duration is None or 0: 2 rows per channel (raw + dF/F)
-    - If zoom_duration > 0: 3 rows per channel (raw + insets + dF/F)
-
-    Inset windows show:
-    - First: Beginning of recording (0 to zoom_duration seconds)
-    - Middle: Center portion of recording
-    - Last: End of recording (last zoom_duration seconds)
-
-    The saved filename follows the pattern: '{unique_id}_{roi_id}_dff.png'
+        Writes ``{unique_id}_{roi_id}_dff.png`` and closes the figure.
     """
     t = np.arange(len(trace)) / frame_rate
     show_insets = bool(zoom_duration)
