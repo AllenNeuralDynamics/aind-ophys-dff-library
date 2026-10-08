@@ -110,7 +110,13 @@ def set_dff_config(
     The bounds returned in ``bounds_all`` encode the sign convention:
     ``b_inf``, ``b_slow``, ``b_fast`` are constrained non-negative;
     ``b_bright`` is constrained non-positive (the suppression term, stored
-    as a negative amplitude).
+    as a negative amplitude). Equivalence with the older "biexp+bright"
+    form
+
+        F0 = b_inf + b_slow*exp(-t/t_slow) + b_fast*exp(-t/t_fast)
+                  − |b_bright_old| * exp(-t/t_bright)
+
+    is recovered by ``b_bright_new = −b_bright_old``.
 
     Parameters
     ----------
