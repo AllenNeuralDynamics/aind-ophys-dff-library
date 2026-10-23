@@ -24,7 +24,7 @@ from aind_ophys_dff_library.settings import DFFSettings
 from aind_ophys_dff_library.utils.metadata_utils import DFFMetadata
 
 FRAME_RATE = 10.0
-N_ROIS = 2
+N_ROIS = 10  # Smallest count whose figure file names are zero-padded.
 N_FRAMES = 1200
 UNIQUE_ID = "VISp_0"
 
@@ -57,6 +57,12 @@ def write_extraction_h5(directory: Path, traces: np.ndarray) -> Path:
     with h5py.File(path, "w") as f:
         f.create_dataset("traces/corrected", data=traces)
     return path
+
+
+def read_dff_metric(output_dir: Path) -> dict:
+    """Return the dF/F metric of the plane's written quality_control.json."""
+    document = json.loads((output_dir / "quality_control.json").read_text())
+    return document["metrics"][0]
 
 
 class TestMedian(unittest.TestCase):
@@ -159,7 +165,20 @@ class TestRunDff(unittest.TestCase):
                 self.assertEqual(f["skewness"].shape, (N_ROIS,))
             plots = sorted((output_dir / job.PLOTS_DIR).glob("*.png"))
             self.assertEqual(len(plots), N_ROIS)
-            self.assertTrue((output_dir / "quality_control.json").exists())
+            metric = read_dff_metric(output_dir)
+            self.assertEqual(metric["tags"]["type"], "Informational")
+            (curation,) = metric["value"]
+            self.assertEqual(
+                list(curation), [f"{n:02d}" for n in range(N_ROIS)]
+            )
+            self.assertEqual(
+                curation["09"]["reference"],
+                f"{UNIQUE_ID}/dff/plots/{UNIQUE_ID}_09_dff.png",
+            )
+            for entry in curation.values():
+                self.assertTrue(
+                    (Path(tmp) / "results" / entry["reference"]).exists()
+                )
         self.assertEqual(ctx.output_parameters["num_rois"], N_ROIS)
         self.assertEqual(ctx.output_parameters["num_frames"], N_FRAMES)
         self.assertIsInstance(ctx.output_parameters["median_noise"], float)
@@ -179,7 +198,7 @@ class TestRunDff(unittest.TestCase):
             with h5py.File(output_dir / f"{UNIQUE_ID}_dff.h5", "r") as f:
                 self.assertEqual(f["data"].shape, (0, N_FRAMES))
             self.assertFalse((output_dir / job.PLOTS_DIR).exists())
-            self.assertTrue((output_dir / "quality_control.json").exists())
+            self.assertEqual(read_dff_metric(output_dir)["value"], [{}])
         self.assertEqual(ctx.output_parameters["num_rois"], 0)
         self.assertEqual(ctx.output_parameters["num_frames"], N_FRAMES)
         self.assertIsNone(ctx.output_parameters["median_noise"])

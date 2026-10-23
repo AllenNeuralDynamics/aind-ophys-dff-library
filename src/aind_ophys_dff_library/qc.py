@@ -16,7 +16,7 @@ and without ``QCEvaluation`` there is no wrapper to put a metric in.
 import logging
 from datetime import datetime as dt
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 import matplotlib as mpl
 import numpy as np
@@ -41,11 +41,12 @@ logger = logging.getLogger(__name__)
 
 CURATION_TYPE = "ROI dF/F trace review"
 EVALUATION = "dF/F"
+METRIC_TYPE = "Informational"
 
 
 def build_dff_curation_metric(
     unique_id: str,
-    plot_references: List[str],
+    plot_references: Dict[str, str],
 ) -> CurationMetric:
     """Construct the per-ROI dF/F curation metric for one plane.
 
@@ -53,26 +54,31 @@ def build_dff_curation_metric(
     ----------
     unique_id : str
         Plane/FOV identifier used in the metric name.
-    plot_references : list of str
-        One per-ROI diagnostic figure path, relative to the asset root, in ROI
-        order. Empty when no ROIs were detected.
+    plot_references : dict of str to str
+        Per-ROI diagnostic figure path, relative to the asset root, keyed by
+        ROI id in ROI order. Empty when no ROIs were detected.
 
     Returns
     -------
     CurationMetric
-        The dF/F curation metric, with an automated PASS status.
+        The dF/F curation metric, with an automated PASS status. Its value is
+        a one-element list holding ``{roi_id: {"reference": path}}``.
     """
+    # The QC portal reads the last list element as the curation mapping.
+    curation = {
+        roi_id: {"reference": reference}
+        for roi_id, reference in plot_references.items()
+    }
     return CurationMetric(
         name=f"{unique_id} dF/F",
         modality=Modality.POPHYS,
         stage=Stage.PROCESSING,
         type=CURATION_TYPE,
-        value=list(plot_references),
-        tags={"evaluation": EVALUATION, "type": "Operational QC"},
+        value=[curation],
+        tags={"evaluation": EVALUATION, "type": METRIC_TYPE},
         description=(
-            "Review each ROI's neuropil-corrected trace against its fitted "
-            "F0 and the resulting dF/F, and curate out ROIs whose baseline "
-            "fit is wrong."
+            "dF/F for each ROI: neuropil-corrected trace, fitted baseline "
+            "and the resulting dF/F."
         ),
         status_history=[
             QCStatus(

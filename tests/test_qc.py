@@ -1,5 +1,6 @@
 """Tests for dF/F quality_control.json generation and the QC figures."""
 
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -26,10 +27,10 @@ class TestDFFCurationMetric(unittest.TestCase):
 
     def setUp(self) -> None:
         """Build the metric once for the assertions below."""
-        self.references = [
-            "VISp_0/dff/plots/VISp_0_00_dff.png",
-            "VISp_0/dff/plots/VISp_0_01_dff.png",
-        ]
+        self.references = {
+            "00": "VISp_0/dff/plots/VISp_0_00_dff.png",
+            "01": "VISp_0/dff/plots/VISp_0_01_dff.png",
+        }
         self.metric = qc.build_dff_curation_metric("VISp_0", self.references)
 
     def test_is_a_core_curation_metric(self) -> None:
@@ -43,12 +44,25 @@ class TestDFFCurationMetric(unittest.TestCase):
         self.assertEqual(self.metric.modality, Modality.POPHYS)
         self.assertEqual(self.metric.stage, Stage.PROCESSING)
         self.assertEqual(self.metric.type, qc.CURATION_TYPE)
-        self.assertEqual(self.metric.value, self.references)
+
+    def test_value_is_one_roi_mapping(self) -> None:
+        """The value is a one-element list holding a plain ROI mapping."""
+        self.assertEqual(
+            self.metric.value,
+            [
+                {
+                    "00": {"reference": "VISp_0/dff/plots/VISp_0_00_dff.png"},
+                    "01": {"reference": "VISp_0/dff/plots/VISp_0_01_dff.png"},
+                }
+            ],
+        )
+        self.assertIsInstance(self.metric.value[0], dict)
+        self.assertEqual(list(self.metric.value[0]), ["00", "01"])
 
     def test_carries_the_grouping_tags(self) -> None:
         """The evaluation tag is what default_grouping groups on."""
         self.assertEqual(self.metric.tags["evaluation"], qc.EVALUATION)
-        self.assertEqual(self.metric.tags["type"], "Operational QC")
+        self.assertEqual(self.metric.tags["type"], "Informational")
 
     def test_automated_pass(self) -> None:
         """The metric is seeded with one automated PASS status."""
@@ -57,10 +71,10 @@ class TestDFFCurationMetric(unittest.TestCase):
         self.assertEqual(status.status, Status.PASS)
         self.assertEqual(status.evaluator, "Automated")
 
-    def test_no_rois_is_an_empty_value_list(self) -> None:
+    def test_no_rois_is_one_empty_mapping(self) -> None:
         """A plane with no ROIs still emits a well-formed metric."""
-        metric = qc.build_dff_curation_metric("VISp_0", [])
-        self.assertEqual(metric.value, [])
+        metric = qc.build_dff_curation_metric("VISp_0", {})
+        self.assertEqual(metric.value, [{}])
 
 
 class TestQualityControlDocument(unittest.TestCase):
@@ -68,20 +82,25 @@ class TestQualityControlDocument(unittest.TestCase):
 
     def test_default_grouping(self) -> None:
         """The project-standard grouping is applied."""
-        metric = qc.build_dff_curation_metric("VISp_0", ["a.png"])
+        metric = qc.build_dff_curation_metric("VISp_0", {"0": "a.png"})
         document = qc.build_quality_control([metric])
         self.assertEqual(document.default_grouping, ["evaluation"])
         self.assertEqual(len(document.metrics), 1)
 
     def test_write_round_trips(self) -> None:
         """The written document validates back as a full v2 QualityControl."""
-        metric = qc.build_dff_curation_metric("VISp_0", ["a.png"])
+        metric = qc.build_dff_curation_metric("VISp_0", {"0": "a.png"})
         with TemporaryDirectory() as tmp:
             written = qc.write_quality_control_json(
                 qc.build_quality_control([metric]), Path(tmp) / "nested"
             )
             self.assertTrue(written.exists())
-            QualityControl.model_validate_json(written.read_text())
+            text = written.read_text()
+        QualityControl.model_validate_json(text)
+        self.assertEqual(
+            json.loads(text)["metrics"][0]["value"],
+            [{"0": {"reference": "a.png"}}],
+        )
 
 
 class TestZoomWindows(unittest.TestCase):

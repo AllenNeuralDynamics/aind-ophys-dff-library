@@ -13,7 +13,7 @@ import logging
 import os
 from multiprocessing import Pool
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import h5py
 import numpy as np
@@ -251,7 +251,7 @@ def _write_roi_plots(
     dff_traces: np.ndarray,
     frame_rate: float,
     logs: Optional[list],
-) -> List[str]:
+) -> Dict[str, str]:
     """Render one diagnostic figure per ROI and return their references.
 
     Parameters
@@ -275,17 +275,18 @@ def _write_roi_plots(
 
     Returns
     -------
-    list of str
-        Per-ROI figure paths relative to the results root, in ROI order.
+    dict of str to str
+        Per-ROI figure path relative to the results root, keyed by the
+        zero-padded ROI id in its file name, in ROI order.
     """
     n_rois = traces.shape[0]
     if not n_rois:
-        return []
+        return {}
 
     results_root = Path(settings.output_dir).resolve()
     fig_path = output_dir / PLOTS_DIR
     fig_path.mkdir(parents=True, exist_ok=True)
-    # Zero-padded so the figures (and the curation list) sort numerically.
+    # Zero-padded so the figure files sort numerically.
     roi_ids = [f"{n:0{len(str(n_rois))}d}" for n in range(n_rois)]
     plot_logs = logs if logs is not None else [None] * n_rois
 
@@ -304,12 +305,12 @@ def _write_roi_plots(
                 [settings.zoom_duration] * n_rois,
             ),
         )
-    return [
-        relative_to_root(
+    return {
+        roi_id: relative_to_root(
             results_root, fig_path / f"{unique_id}_{roi_id}_dff.png"
         )
         for roi_id in roi_ids
-    ]
+    }
 
 
 def _median(values: np.ndarray) -> Optional[float]:
