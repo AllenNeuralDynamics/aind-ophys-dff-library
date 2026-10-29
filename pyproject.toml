@@ -18,7 +18,7 @@ version = "0.1.0"
 
 dependencies = [
     'aind-ophys-utils==0.1.0',
-    'joblib==1.5.3',
+    'joblib==1.6.0',
     'jax==0.6.2',
     "aind-data-schema==2.9.0",
     "aind-data-schema-models==6.2.0",
