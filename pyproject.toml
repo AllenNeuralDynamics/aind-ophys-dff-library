@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aind-ophys-dff-library"
-description = "Generated from aind-library-template"
+description = "dF/F estimation for AIND planar optical physiology"
 license = "MIT"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 authors = [
     {name = "Allen Institute for Neural Dynamics"}
 ]
@@ -19,7 +19,21 @@ version = "0.1.0"
 dependencies = [
     'aind-ophys-utils==0.1.0',
     'joblib==1.5.3',
+    'jax==0.6.2',
+    "aind-data-schema==2.9.0",
+    "aind-data-schema-models==6.2.0",
+    "aind-pophys-metadata @ git+https://github.com/AllenNeuralDynamics/aind-pophys-metadata.git@v0.3.0",
+    "log-schema[cloudwatch] @ git+https://github.com/AllenNeuralDynamics/aind-log-utils.git@f09685e#subdirectory=python",
+    "h5py==3.16.0",
+    "matplotlib==3.10.9",
+    "numpy==2.2.6",
+    "scipy==1.15.3",
+    "pydantic==2.11.10",
+    "pydantic-settings==2.14.2",
 ]
+
+[project.urls]
+Repository = "https://github.com/AllenNeuralDynamics/aind-ophys-dff-library"
 
 [dependency-groups]
 dev = [
@@ -42,8 +56,8 @@ exclude = '''
 
 (
   /(
-      \.eggs         # exclude a few common directories in the
-    | \.git          # root of the project
+      \.eggs
+    | \.git
     | \.hg
     | \.mypy_cache
     | \.tox
@@ -58,7 +72,12 @@ exclude = '''
 '''
 
 [tool.coverage.run]
-omit = ["*__init__*"]
+omit = [
+    "*__init__*",
+    "*/triexp_dff.py",
+    "*/dff_config.py",
+    "*/job.py",
+]
 source = ["aind_ophys_dff_library", "tests"]
 
 [tool.coverage.report]
